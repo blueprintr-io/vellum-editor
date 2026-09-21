@@ -63,6 +63,10 @@ export function createRecoveryStorage<T extends object>(
   let queue: Promise<void> = Promise.resolve();
   let writing = false;
   let readFailed = false;
+  // A write made while recovery is still being read would replace saved
+  // preferences and the personal library with defaults. The store saves its
+  // settled state once hydration finishes instead.
+  let reading = false;
   return {
     protect() { readFailed = true; },
     resume() { readFailed = false; },
@@ -71,6 +75,7 @@ export function createRecoveryStorage<T extends object>(
         try { const raw = local.getItem(name); return raw ? JSON.parse(raw) : null; }
         catch (error) { readFailed = true; reportRecoveryError(error); return null; }
       }
+      reading = true;
       return (async () => {
         try {
           await queue;
@@ -89,11 +94,13 @@ export function createRecoveryStorage<T extends object>(
           readFailed = true;
           reportRecoveryError(error);
           return null;
+        } finally {
+          reading = false;
         }
       })();
     },
     setItem(name, value) {
-      if (readFailed) return;
+      if (readFailed || reading) return;
       if (!backend) {
         try {
           const state = value.state as Record<string, unknown>;

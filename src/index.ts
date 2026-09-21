@@ -5,6 +5,7 @@ export { Editor as VellumEditor } from './editor/Editor';
 export type { VellumEditorProps } from './editor/Editor';
 
 export { useEditor } from './store/editor';
+export { setUnsavedChangesPrompt } from './editor/useAutosave';
 
 /** Default slim bottom bar used by the `diagramTabs` plugin slot. Embedders
  *  who want the standalone-style chrome can register a plugin with

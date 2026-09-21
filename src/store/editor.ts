@@ -1696,7 +1696,9 @@ export function newId(prefix: string): string {
   return `${prefix}-${(++_idCounter).toString(36)}`;
 }
 
-let hydrationStart: Pick<EditorState, 'workspaceId' | 'workspaceRevision'> | undefined;
+let hydrationStart: Pick<EditorState, 'workspaceId' | 'workspaceRevision' | 'diagram' | 'diagramTabs' | 'tabSnapshots'> | undefined;
+/** Persisted fields that belong to the open document rather than the user. */
+const RECOVERED_DOCUMENT_FIELDS = new Set(['diagram', 'filePath', 'dirty', 'workspaceRevision', 'savedRevision', 'diagramTabs', 'activeTabId', 'tabSnapshots']);
 
 export const useEditor = create<EditorState>()(
   persist(
@@ -4718,9 +4720,16 @@ export const useEditor = create<EditorState>()(
       // Invalid recovery data stays untouched so a later read can recover it.
       version: 1,
       onRehydrateStorage: (state) => {
-        const started = { workspaceId: state.workspaceId, workspaceRevision: state.workspaceRevision };
+        const started = {
+          workspaceId: state.workspaceId, workspaceRevision: state.workspaceRevision,
+          diagram: state.diagram, diagramTabs: state.diagramTabs, tabSnapshots: state.tabSnapshots,
+        };
         hydrationStart = started;
-        return () => { if (hydrationStart === started) hydrationStart = undefined; };
+        return () => {
+          if (hydrationStart === started) hydrationStart = undefined;
+          // Writes are held while recovery is read, so save the settled state once.
+          queueMicrotask(() => useEditor.setState({}));
+        };
       },
       partialize: (state): PersistedSlice => {
         // Store the user's original active tab while export renders another tab.
@@ -4784,10 +4793,19 @@ export const useEditor = create<EditorState>()(
       // spread can throw on getter properties. Fall back to defaults rather
       // than crash the editor on boot.
       merge: (persisted, current) => {
-        // Embedding hosts can load or edit a document before IndexedDB returns.
-        // Recovery must not replace those newer explicit changes.
-        if (hydrationStart && (current.workspaceId !== hydrationStart.workspaceId ||
-          current.workspaceRevision !== hydrationStart.workspaceRevision)) return current;
+        // Embedding hosts can load or edit a document before IndexedDB returns,
+        // including through useEditor.setState, which does not advance the
+        // revision. Keep that newer document, but still restore preferences and
+        // the personal library: persist writes the merged state back, so
+        // dropping them here would replace the saved copies with defaults.
+        const start = hydrationStart;
+        if (start && (current.workspaceId !== start.workspaceId ||
+          current.workspaceRevision !== start.workspaceRevision ||
+          current.diagram !== start.diagram || current.diagramTabs !== start.diagramTabs ||
+          current.tabSnapshots !== start.tabSnapshots)) {
+          persisted = Object.fromEntries(Object.entries((persisted ?? {}) as object)
+            .filter(([key]) => !RECOVERED_DOCUMENT_FIELDS.has(key)));
+        }
         try {
           const p = (persisted ?? {}) as Partial<PersistedSlice>;
           if (p.diagram) {
