@@ -1,0 +1,14 @@
+version: '1.0'
+meta:
+  title: Compatibility diagram
+shapes:
+  - id: old-rect
+    kind: rect
+    x: 12
+    y: 24
+    w: 120
+    h: 80
+    label: Saved before workspace tabs
+    layer: blueprint
+connectors: []
+annotations: []

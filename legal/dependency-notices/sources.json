@@ -1,0 +1,536 @@
+{
+  "@radix-ui/react-compose-refs@1.1.2": {
+    "file": "_radix-ui_react-compose-refs-1.1.2.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-context@1.1.2": {
+    "file": "_radix-ui_react-context-1.1.2.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-direction@1.1.1": {
+    "file": "_radix-ui_react-direction-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-id@1.1.1": {
+    "file": "_radix-ui_react-id-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-use-callback-ref@1.1.1": {
+    "file": "_radix-ui_react-use-callback-ref-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-use-escape-keydown@1.1.1": {
+    "file": "_radix-ui_react-use-escape-keydown-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-use-layout-effect@1.1.1": {
+    "file": "_radix-ui_react-use-layout-effect-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-use-rect@1.1.1": {
+    "file": "_radix-ui_react-use-rect-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/react-use-size@1.1.1": {
+    "file": "_radix-ui_react-use-size-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "@radix-ui/rect@1.1.1": {
+    "file": "_radix-ui_rect-1.1.1.txt",
+    "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
+  },
+  "crates.io:alloc-stdlib@0.2.2": [
+    {
+      "file": "rust_alloc-stdlib-0.2.2-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/6032b6a9b20e03737135c55a0270ccffcc1438ef/LICENSE"
+    }
+  ],
+  "crates.io:block2@0.6.2": [
+    {
+      "file": "rust_block2-0.6.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md"
+    }
+  ],
+  "crates.io:defmt-parser@1.0.0": [
+    {
+      "file": "rust_defmt-parser-1.0.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_defmt-parser-1.0.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT"
+    }
+  ],
+  "crates.io:dispatch2@0.3.1": [
+    {
+      "file": "rust_dispatch2-0.3.1-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md"
+    }
+  ],
+  "crates.io:dlopen2_derive@0.4.3": [
+    {
+      "file": "rust_dlopen2_derive-0.4.3-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/OpenByteDev/dlopen2/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE"
+    }
+  ],
+  "crates.io:dlopen2@0.8.2": [
+    {
+      "file": "rust_dlopen2-0.8.2-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/OpenByteDev/dlopen2/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE"
+    }
+  ],
+  "crates.io:jni-macros@0.22.4": [
+    {
+      "file": "rust_jni-macros-0.22.4-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_jni-macros-0.22.4-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-rs/33045a124105c939d1e2cbdcb5a39e5d868ffa03/LICENSE-MIT"
+    }
+  ],
+  "crates.io:jni-sys-macros@0.4.1": [
+    {
+      "file": "rust_jni-sys-macros-0.4.1-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_jni-sys-macros-0.4.1-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/LICENSE-MIT"
+    }
+  ],
+  "crates.io:jni@0.22.4": [
+    {
+      "file": "rust_jni-0.22.4-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_jni-0.22.4-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/LICENSE-MIT"
+    }
+  ],
+  "crates.io:ndk-sys@0.6.0+11769913": [
+    {
+      "file": "rust_ndk-sys-0.6.0+11769913-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_ndk-sys-0.6.0+11769913-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-MIT"
+    }
+  ],
+  "crates.io:ndk@0.9.0": [
+    {
+      "file": "rust_ndk-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_ndk-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-MIT"
+    }
+  ],
+  "crates.io:objc2-app-kit@0.3.2": [
+    {
+      "file": "rust_objc2-app-kit-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-cloud-kit@0.3.2": [
+    {
+      "file": "rust_objc2-cloud-kit-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-data@0.3.2": [
+    {
+      "file": "rust_objc2-core-data-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-foundation@0.3.2": [
+    {
+      "file": "rust_objc2-core-foundation-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-graphics@0.3.2": [
+    {
+      "file": "rust_objc2-core-graphics-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-image@0.3.2": [
+    {
+      "file": "rust_objc2-core-image-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-location@0.3.2": [
+    {
+      "file": "rust_objc2-core-location-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-core-text@0.3.2": [
+    {
+      "file": "rust_objc2-core-text-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-encode@4.1.0": [
+    {
+      "file": "rust_objc2-encode-4.1.0-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-exception-helper@0.1.1": [
+    {
+      "file": "rust_objc2-exception-helper-0.1.1-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-foundation@0.3.2": [
+    {
+      "file": "rust_objc2-foundation-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-io-surface@0.3.2": [
+    {
+      "file": "rust_objc2-io-surface-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-osa-kit@0.3.2": [
+    {
+      "file": "rust_objc2-osa-kit-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-quartz-core@0.3.2": [
+    {
+      "file": "rust_objc2-quartz-core-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-ui-kit@0.3.2": [
+    {
+      "file": "rust_objc2-ui-kit-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-user-notifications@0.3.2": [
+    {
+      "file": "rust_objc2-user-notifications-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2-web-kit@0.3.2": [
+    {
+      "file": "rust_objc2-web-kit-0.3.2-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+    }
+  ],
+  "crates.io:objc2@0.6.4": [
+    {
+      "file": "rust_objc2-0.6.4-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md"
+    }
+  ],
+  "crates.io:tauri-build@2.6.1": [
+    {
+      "file": "rust_tauri-build-2.6.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-codegen@2.6.1": [
+    {
+      "file": "rust_tauri-codegen-2.6.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-macros@2.6.1": [
+    {
+      "file": "rust_tauri-macros-2.6.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-plugin@2.6.1": [
+    {
+      "file": "rust_tauri-plugin-2.6.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-runtime-wry@2.11.1": [
+    {
+      "file": "rust_tauri-runtime-wry-2.11.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-runtime@2.11.1": [
+    {
+      "file": "rust_tauri-runtime-2.11.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri-utils@2.9.1": [
+    {
+      "file": "rust_tauri-utils-2.9.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:tauri@2.11.1": [
+    {
+      "file": "rust_tauri-2.11.1-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/e5ae5b93cdd310045191cc0526f253140ad64b87/LICENSE.spdx"
+    }
+  ],
+  "crates.io:wasip3@0.4.0+wasi-0.3.0-rc-2026-01-06": [
+    {
+      "file": "rust_wasip3-0.4.0+wasi-0.3.0-rc-2026-01-06-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasi-rs/06ce201370fcde0d1b0d47cac8ecb1b0b312c9f9/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wasip3-0.4.0+wasi-0.3.0-rc-2026-01-06-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasi-rs/06ce201370fcde0d1b0d47cac8ecb1b0b312c9f9/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wasip3-0.4.0+wasi-0.3.0-rc-2026-01-06-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasi-rs/06ce201370fcde0d1b0d47cac8ecb1b0b312c9f9/LICENSE-MIT"
+    }
+  ],
+  "crates.io:webview2-com-macros@0.8.1": [
+    {
+      "file": "rust_webview2-com-macros-0.8.1-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE"
+    }
+  ],
+  "crates.io:webview2-com-sys@0.38.2": [
+    {
+      "file": "rust_webview2-com-sys-0.38.2-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE"
+    }
+  ],
+  "crates.io:webview2-com@0.38.2": [
+    {
+      "file": "rust_webview2-com-0.38.2-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE"
+    }
+  ],
+  "crates.io:unic-char-property@0.9.0": [
+    {
+      "file": "rust_unic-char-property-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_unic-char-property-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "crates.io:unic-char-range@0.9.0": [
+    {
+      "file": "rust_unic-char-range-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_unic-char-range-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "crates.io:unic-common@0.9.0": [
+    {
+      "file": "rust_unic-common-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_unic-common-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "crates.io:unic-ucd-ident@0.9.0": [
+    {
+      "file": "rust_unic-ucd-ident-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_unic-ucd-ident-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT"
+    }
+  ],
+  "crates.io:unic-ucd-version@0.9.0": [
+    {
+      "file": "rust_unic-ucd-version-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_unic-ucd-version-0.9.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "crates.io:wasm-encoder@0.244.0": [
+    {
+      "file": "rust_wasm-encoder-0.244.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wasm-encoder-0.244.0-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wasm-encoder-0.244.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-MIT"
+    }
+  ],
+  "crates.io:wasm-metadata@0.244.0": [
+    {
+      "file": "rust_wasm-metadata-0.244.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wasm-metadata-0.244.0-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wasm-metadata-0.244.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-MIT"
+    }
+  ],
+  "crates.io:wasmparser@0.244.0": [
+    {
+      "file": "rust_wasmparser-0.244.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wasmparser-0.244.0-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wasmparser-0.244.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-MIT"
+    }
+  ],
+  "crates.io:wit-component@0.244.0": [
+    {
+      "file": "rust_wit-component-0.244.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wit-component-0.244.0-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wit-component-0.244.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-MIT"
+    }
+  ],
+  "crates.io:wit-parser@0.244.0": [
+    {
+      "file": "rust_wit-parser-0.244.0-LICENSE-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-APACHE"
+    },
+    {
+      "file": "rust_wit-parser-0.244.0-LICENSE-Apache-2.0_WITH_LLVM-exception.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-Apache-2.0_WITH_LLVM-exception"
+    },
+    {
+      "file": "rust_wit-parser-0.244.0-LICENSE-MIT.txt",
+      "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/d4e317f22c3bace76cb3205003bcc34b4929037d/LICENSE-MIT"
+    }
+  ],
+  "crates.io:r-efi@5.3.0": {
+    "file": "rust_r-efi-5.3.0-AUTHORS.txt",
+    "url": "https://raw.githubusercontent.com/r-efi/r-efi/97b55bed1c2c91dcbf787674849f05337ff80b33/AUTHORS"
+  },
+  "crates.io:r-efi@6.0.0": {
+    "file": "rust_r-efi-6.0.0-AUTHORS.txt",
+    "url": "https://raw.githubusercontent.com/r-efi/r-efi/7e1b0322d31d625f81a5656096330934f9cd835d/AUTHORS"
+  },
+  "crates.io:libappindicator-sys@0.9.0": [
+    {
+      "file": "rust_libappindicator-sys-0.9.0-LICENSE-MIT.txt",
+      "url": "https://docs.rs/crate/libappindicator/0.9.0/source/LICENSE-MIT",
+      "provenance": "The installed libappindicator and libappindicator-sys crates both record Git commit eafd1e3682a1247f595410266091e9684021cb6f; sys is the sys/ subtree of that repository."
+    },
+    {
+      "file": "rust_libappindicator-sys-0.9.0-LICENSE-APACHE.txt",
+      "url": "https://docs.rs/crate/libappindicator/0.9.0/source/LICENSE-APACHE",
+      "provenance": "The installed libappindicator and libappindicator-sys crates both record Git commit eafd1e3682a1247f595410266091e9684021cb6f; sys is the sys/ subtree of that repository."
+    }
+  ],
+  "crates.io:tao-macros@0.1.3": [
+    {
+      "file": "rust_tao-macros-0.1.3-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tao/340684d932b6126bed449fc1f4edca81776ad592/LICENSE",
+      "provenance": "Pinned tao-macros-v0.1.3 release commit. The packaged Cargo.toml.orig, src/lib.rs and both examples match the Git blob hashes at this commit."
+    },
+    {
+      "file": "rust_tao-macros-0.1.3-LICENSE.spdx.txt",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tao/340684d932b6126bed449fc1f4edca81776ad592/LICENSE.spdx"
+    }
+  ],
+  "crates.io:selectors@0.36.1": [
+    {
+      "file": "rust_selectors-0.36.1-source-notice.txt",
+      "url": "https://raw.githubusercontent.com/servo/stylo/635e1a19d02960588a00e189bd4bd5bdb150ec3d/selectors/lib.rs",
+      "provenance": "Verbatim opening license comment from the installed lib.rs. The source commit is recorded in the installed .cargo_vcs_info.json."
+    },
+    {
+      "file": "MPL-2.0-official.txt",
+      "url": "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt",
+      "provenance": "Official MPL 2.0 terms from Mozilla, referenced by the packaged source comment. This is not an upstream repository LICENSE file."
+    }
+  ],
+  "crates.io:cesu8@1.1.0": [
+    {
+      "file": "rust_cesu8-1.1.0-source-notice.txt",
+      "url": "https://docs.rs/crate/cesu8/1.1.0/source/src/lib.rs",
+      "provenance": "Verbatim opening copyright and license comment from the installed crate at this exact version."
+    },
+    {
+      "file": "rust_cesu8-1.1.0-COPYRIGHT-RUST.txt",
+      "url": "https://docs.rs/crate/cesu8/1.1.0/source/COPYRIGHT-RUST.txt",
+      "provenance": "Unmodified redistribution notice included in the installed cesu8 1.1.0 crate."
+    },
+    {
+      "file": "Apache-2.0-official.txt",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "provenance": "Versioned Apache 2.0 terms from the license publisher; the accompanying exact-version package notice or metadata declares this license."
+    }
+  ],
+  "crates.io:winapi-i686-pc-windows-gnu@0.4.0": [
+    {
+      "file": "rust_winapi-i686-pc-windows-gnu-0.4.0-source-notice.txt",
+      "url": "https://docs.rs/crate/winapi-i686-pc-windows-gnu/0.4.0/source/src/lib.rs",
+      "provenance": "Verbatim opening copyright and license comment from the installed crate at this exact version."
+    },
+    {
+      "file": "Apache-2.0-official.txt",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "provenance": "Versioned Apache 2.0 terms from the license publisher; the accompanying exact-version package notice or metadata declares this license."
+    }
+  ],
+  "crates.io:winapi-x86_64-pc-windows-gnu@0.4.0": [
+    {
+      "file": "rust_winapi-x86_64-pc-windows-gnu-0.4.0-source-notice.txt",
+      "url": "https://docs.rs/crate/winapi-x86_64-pc-windows-gnu/0.4.0/source/src/lib.rs",
+      "provenance": "Verbatim opening copyright and license comment from the installed crate at this exact version."
+    },
+    {
+      "file": "Apache-2.0-official.txt",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "provenance": "Versioned Apache 2.0 terms from the license publisher; the accompanying exact-version package notice or metadata declares this license."
+    }
+  ],
+  "crates.io:rustls-platform-verifier-android@0.1.1": [
+    {
+      "file": "rust_rustls-platform-verifier-android-0.1.1-Cargo.toml.orig.txt",
+      "url": "https://docs.rs/crate/rustls-platform-verifier-android/0.1.1/source/Cargo.toml.orig",
+      "provenance": "Unmodified package manifest from the installed crate. It declares MIT OR Apache-2.0; no copyright holder is inferred."
+    },
+    {
+      "file": "Apache-2.0-official.txt",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "provenance": "Versioned Apache 2.0 terms from the license publisher; the accompanying exact-version package notice or metadata declares this license."
+    }
+  ]
+}

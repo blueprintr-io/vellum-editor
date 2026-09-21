@@ -1,0 +1,37 @@
+[package]
+name = "vellum-desktop"
+version = "1.7.5"
+description = "Vellum diagram editor - offline desktop build"
+authors = ["Josh Morris"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "vellum_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+# The signed updater channel is managed by release.yml. Installation requires
+# confirmation; declining postpones that version for the current session.
+tauri-plugin-updater = "2"
+# Tauri's generated context references serde_json from the host crate when
+# tauri.conf.json contains plugin configuration.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[patch.crates-io]
+# Preserve GTK3 compatibility while applying the upstream iterator safety fix.
+glib = { path = "vendor/glib" }

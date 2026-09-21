@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><metadata id="vellum-source" data-type="application/x-vellum+yaml">version: workspace-1.0
+activeTabId: original-tab
+tabs:
+  - id: original-tab
+    diagram:
+      version: '1.0'
+      meta:
+        title: Compatibility diagram
+      shapes:
+        - id: old-rect
+          kind: rect
+          x: 12
+          y: 24
+          w: 120
+          h: 80
+          label: Saved before workspace tabs
+          layer: blueprint
+      connectors: []
+      annotations: []
+</metadata><rect width="1" height="1" fill="red"/></svg>

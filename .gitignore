@@ -1,0 +1,51 @@
+# dependencies
+node_modules
+
+# build output
+dist
+dist-ssr
+dist-*/
+
+# vite/tsc artefacts
+.vite
+*.local
+*.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# env
+.env
+.env.local
+.env.*.local
+
+# Internal stuff - operator infra (deploy-ec2.sh, nginx-vellum.conf) and
+# scratch docs that stay out of the public repo. NOTE: these MUST be
+# globs (*.sh / *.conf), not bare extensions - `.sh` alone matches a
+# file literally named `.sh`, not files ending in `.sh`.
+*.sh
+*.conf
+docs/*
+
+# Bundled vendor icon packs - synced from vellum-iconpacks/dist/icons by
+# scripts/sync-iconpacks.mjs at build time. The source distribution ships
+# without them; the canonical source lives in the workspace's
+# vellum-iconpacks/raw-icons/ tree. Keep public/icons/ out of git so we
+# don't accidentally commit trademarked vendor SVGs into the source distribution.
+public/icons/
+
+# Claude Cowork auto-memory dump - personal scratchpad, never commit
+CLAUDE_MEMORY.md
+# Playwright chrome-layout suite (npm run test:e2e) - run artefacts only.
+test-results/
+playwright-report/
+
+# WebDriver smoke-test screenshots (scripts/e2e/webdriver-smoke.mjs); CI uploads them as artefacts.
+e2e-artifacts/

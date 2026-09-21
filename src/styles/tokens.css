@@ -1,0 +1,433 @@
+/* Vellum design tokens. Source of truth - Tailwind theme.extend reads these via CSS vars.
+ *
+ * Each chrome token is declared in BOTH #hex and `R G B` triplet form so Tailwind v3
+ * alpha modifiers (`bg-accent/20`) compose correctly through `rgb(var(--token-rgb) / a)`.
+ *
+ * Canvas tokens (`--paper`, `--ink`, `--paper-grid`, `--ink-muted`) flip with the
+ * theme so diagrams stay readable on both light and dark canvases. The accent /
+ * sketch / refined / note colours are the same on both since they read against
+ * either ground.
+ */
+
+:root {
+  /* Chrome - Dark (default) */
+  --bg: #0d1117;
+  --bg-rgb: 13 17 23;
+  --bg-subtle: #161b22;
+  --bg-subtle-rgb: 22 27 34;
+  --bg-overlay: #1c2128;
+  --bg-overlay-rgb: 28 33 40;
+  --bg-emphasis: #21262d;
+  --bg-emphasis-rgb: 33 38 45;
+  --border: #30363d;
+  --border-rgb: 48 54 61;
+  --fg: #e6edf3;
+  --fg-rgb: 230 237 243;
+  --fg-muted: #8b949e;
+  --fg-muted-rgb: 139 148 158;
+  --accent: #58a6ff;
+  --accent-rgb: 88 166 255;
+  --accent-emphasis: #388bfd;
+  --accent-emphasis-rgb: 56 139 253;
+  --accent-deep: #1f6feb;
+  --accent-deep-rgb: 31 111 235;
+
+  /* Canvas - dark mode defaults.
+   *
+   * `--slate` is the dark-mode canvas surface (renamed from the old
+   * `--paper` variable because the dark surface no longer reads as
+   * "paper" - it's a slightly-lit slate). The legacy `--paper` alias
+   * is kept so existing `var(--paper)` references in shape styling
+   * (notes, fills, swatches) continue to resolve. Light-mode
+   * canvas keeps the literal `--paper` semantic. */
+  --slate: #171b21;
+  --paper: var(--slate);
+  --paper-grid: #2f3645;
+  --ink: #e6edf3;
+  --ink-muted: #8b949e;
+  --sketch: #ff6b3d;
+  --refined: #58a6ff;
+
+  /* `--mono` is the OPPOSITE-of-ink contrast swatch - it gives users a one-
+   *  click way to pick the colour ink isn't. In dark mode `--ink` is near-
+   *  white (#e6edf3), so `--mono` is pure black; in light mode `--ink` is
+   *  near-black (#1c1a14), so `--mono` is pure white (see html.theme-light).
+   *  This is why the swatch row reads as exactly one black AND one white in
+   *  both themes - `--ink` covers the same-as-text shade, `--mono` covers
+   *  the inverse. Without the flip we ended up with two near-blacks in
+   *  light mode and two near-whites in dark mode. */
+  --mono: #000000;
+
+  /* Coloured swatches - auto-switch with the theme.
+   *
+   * Each named swatch (red/amber/green/blue/violet) has a fill variant and a
+   * stroke variant. Fills are dark/desaturated in dark mode so text-on-fill
+   * stays readable; strokes are brightened in dark mode so they read against
+   * the dark canvas. Light-mode values (under html.theme-light below) keep
+   * the original Vellum palette so existing diagrams look the way the user
+   * picked them.
+   *
+   * The "logical name = swatch identity" model is what lets a saved
+   * `var(--fill-red)` round-trip across themes. Renderers and the inspector
+   * also accept the legacy hex form (#fee2e2 etc.) and remap it to the same
+   * var via resolveSwatchColor() so diagrams predating the dark palette
+   * still autoswitch. */
+  --fill-red: #4a2424;
+  --fill-orange: #4a3318;
+  --fill-amber: #4a3f1c;
+  --fill-green: #1f4332;
+  --fill-teal: #1a4a44;
+  --fill-blue: #1f2f4a;
+  --fill-indigo: #2a2f4a;
+  --fill-violet: #3a224a;
+  --fill-pink: #4a223a;
+
+  --stroke-red: #f7755a;
+  --stroke-orange: #fb923c;
+  --stroke-amber: #f5c277;
+  --stroke-green: #5fc285;
+  --stroke-teal: #5fc2b8;
+  --stroke-blue: #6aa4ff;
+  --stroke-indigo: #818cf8;
+  --stroke-violet: #b07ce0;
+  --stroke-pink: #f0689f;
+
+  /* SHADE LADDERS: each named swatch has four extra
+   *  shades - light to deep - so right-click / chevron reveals 5 cells per
+   *  colour. Named -100 (lightest tint) → -500 (deepest). The base swatch
+   *  above stays at "-300" semantically; the ladders here cover the rest of
+   *  the range. Dark-mode values are tuned so each step still reads as a
+   *  step against the dark canvas without bleeding into the next swatch. */
+  --fill-red-100: #5a2c2c;
+  --fill-red-200: #4a2424;
+  --fill-red-300: #3d1d1d;
+  --fill-red-400: #2e1616;
+  --fill-red-500: #1f0d0d;
+  --fill-amber-100: #5a4a22;
+  --fill-amber-200: #4a3f1c;
+  --fill-amber-300: #3d3216;
+  --fill-amber-400: #2e2710;
+  --fill-amber-500: #1f1a0a;
+  --fill-green-100: #2a583e;
+  --fill-green-200: #1f4332;
+  --fill-green-300: #163528;
+  --fill-green-400: #10271d;
+  --fill-green-500: #0a1a13;
+  --fill-blue-100: #2c3e5e;
+  --fill-blue-200: #1f2f4a;
+  --fill-blue-300: #16243a;
+  --fill-blue-400: #101a2a;
+  --fill-blue-500: #0a121d;
+  --fill-violet-100: #4a2c5e;
+  --fill-violet-200: #3a224a;
+  --fill-violet-300: #2c1a3a;
+  --fill-violet-400: #21132c;
+  --fill-violet-500: #160c1d;
+  --fill-orange-100: #5e4220;
+  --fill-orange-200: #4a3318;
+  --fill-orange-300: #3d2a14;
+  --fill-orange-400: #2e2010;
+  --fill-orange-500: #1f150a;
+  --fill-teal-100: #285e58;
+  --fill-teal-200: #1a4a44;
+  --fill-teal-300: #133b36;
+  --fill-teal-400: #0e2c28;
+  --fill-teal-500: #091d1a;
+  --fill-indigo-100: #36405e;
+  --fill-indigo-200: #2a2f4a;
+  --fill-indigo-300: #1f253a;
+  --fill-indigo-400: #161a2c;
+  --fill-indigo-500: #0d1020;
+  --fill-pink-100: #5e2c4a;
+  --fill-pink-200: #4a223a;
+  --fill-pink-300: #3d1c30;
+  --fill-pink-400: #2e1525;
+  --fill-pink-500: #1f0e18;
+
+  --stroke-red-100: #fcb39f;
+  --stroke-red-200: #f7755a;
+  --stroke-red-300: #db523a;
+  --stroke-red-400: #b03a26;
+  --stroke-red-500: #7e2818;
+  --stroke-amber-100: #fadda1;
+  --stroke-amber-200: #f5c277;
+  --stroke-amber-300: #d39d4f;
+  --stroke-amber-400: #a47a36;
+  --stroke-amber-500: #6e511f;
+  --stroke-green-100: #9be3b6;
+  --stroke-green-200: #5fc285;
+  --stroke-green-300: #3fa569;
+  --stroke-green-400: #277f4f;
+  --stroke-green-500: #155734;
+  --stroke-blue-100: #a9c8ff;
+  --stroke-blue-200: #6aa4ff;
+  --stroke-blue-300: #4080d8;
+  --stroke-blue-400: #275aa3;
+  --stroke-blue-500: #163966;
+  --stroke-violet-100: #d6b3ee;
+  --stroke-violet-200: #b07ce0;
+  --stroke-violet-300: #8d56c0;
+  --stroke-violet-400: #6a3a96;
+  --stroke-violet-500: #46235f;
+  --stroke-orange-100: #fcc59a;
+  --stroke-orange-200: #fb923c;
+  --stroke-orange-300: #d97223;
+  --stroke-orange-400: #ad5615;
+  --stroke-orange-500: #7c3d0d;
+  --stroke-teal-100: #9be6dc;
+  --stroke-teal-200: #5fc2b8;
+  --stroke-teal-300: #3fa49a;
+  --stroke-teal-400: #277e76;
+  --stroke-teal-500: #14564f;
+  --stroke-indigo-100: #b6bbfb;
+  --stroke-indigo-200: #818cf8;
+  --stroke-indigo-300: #5d6cf0;
+  --stroke-indigo-400: #3a4ac1;
+  --stroke-indigo-500: #1f2c84;
+  --stroke-pink-100: #f9a4c2;
+  --stroke-pink-200: #f0689f;
+  --stroke-pink-300: #d44c80;
+  --stroke-pink-400: #a83864;
+  --stroke-pink-500: #762445;
+
+  /* Greyscale ladders for paper and ink. Both anchor on the matching canvas
+   *  token (paper at -300 in dark / -200 in light, ink the same) so the base
+   *  cell and any rung resolve to the same shade when the user lands on it.
+   *  -100 is the airiest tint, -500 the deepest - same direction as every
+   *  other ladder. paper's range sits at the canvas-surface end of the grey
+   *  spectrum; ink's range sits at the text end. The two ladders overlap in
+   *  the middle so the user can step between them seamlessly. */
+  --fill-paper-100: #4a525c;
+  --fill-paper-200: #2a2f37;
+  --fill-paper-300: #171b21;
+  --fill-paper-400: #0d1115;
+  --fill-paper-500: #060809;
+  --fill-ink-100: #ffffff;
+  --fill-ink-200: #f0f6fc;
+  --fill-ink-300: #e6edf3;
+  --fill-ink-400: #8b949e;
+  --fill-ink-500: #484f58;
+  --stroke-paper-100: #4a525c;
+  --stroke-paper-200: #2a2f37;
+  --stroke-paper-300: #171b21;
+  --stroke-paper-400: #0d1115;
+  --stroke-paper-500: #060809;
+  --stroke-ink-100: #ffffff;
+  --stroke-ink-200: #f0f6fc;
+  --stroke-ink-300: #e6edf3;
+  --stroke-ink-400: #8b949e;
+  --stroke-ink-500: #484f58;
+
+  /* Sticky-note (kind: 'note' shape - yellow paper + brown ink) */
+  --note-bg: #fff3c4;
+  --note-ink: #a07b1a;
+
+  /* Notes-LAYER treatment - every object on the Notes layer renders with
+   *  yellow ink + a yellow halo (see #notes-glow filter in Canvas.tsx). The
+   *  glow is a separate RGB triplet because feFlood + feComposite needs the
+   *  components, and the alpha is dropped in-filter so it reads as halo, not
+   *  outline. Glow stays yellow regardless of any per-shape stroke override -
+ * a user changing a shape's stroke to blue still gets a yellow halo.
+   *
+   *  `--notes-ink-rgb` is the same colour in triplet form. The FloatingToolbar
+   *  re-points `--accent-rgb` at it while the Notes layer is the draw target,
+   *  which re-tints every `text-accent` / `bg-accent/x` inside the toolbar in
+   *  one assignment instead of branching each class. It is NOT the same value
+   *  as `--notes-glow` in light mode - the ink darkens for legibility on white
+   *  paper while the halo stays saturated. */
+  --notes-ink: #facc15;
+  --notes-ink-rgb: 250 204 21;
+  --notes-glow: 250 204 21;
+
+  /* Type stacks */
+  --font-body: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-sketch: 'Caveat', cursive;
+}
+
+html.theme-light {
+  --bg: #ffffff;
+  --bg-rgb: 255 255 255;
+  --bg-subtle: #f6f8fa;
+  --bg-subtle-rgb: 246 248 250;
+  --bg-overlay: #ffffff;
+  --bg-overlay-rgb: 255 255 255;
+  --bg-emphasis: #eaeef2;
+  --bg-emphasis-rgb: 234 238 242;
+  --border: #d0d7de;
+  --border-rgb: 208 215 222;
+  --fg: #24292f;
+  --fg-rgb: 36 41 47;
+  --fg-muted: #59636e;
+  --fg-muted-rgb: 89 99 110;
+  --accent: #0969da;
+  --accent-rgb: 9 105 218;
+  --accent-emphasis: #0550ae;
+  --accent-emphasis-rgb: 5 80 174;
+  --accent-deep: #033d8b;
+  --accent-deep-rgb: 3 61 139;
+
+  /* Canvas - light mode */
+  --paper: #f7f9fa;
+  --paper-grid: #b8c0cb;
+  --ink: #1c1a14;
+  --ink-muted: #6b6655;
+  --sketch: #c83e1d;
+  --refined: #1f6feb;
+
+  /* Notes-layer ink: light mode runs a darker amber so the marker line is
+   *  legible on white paper (#facc15 yellow disappears against #f7f9fa). The
+   *  glow keeps a saturated yellow so the halo reads as colour, not haze. */
+  --notes-ink: #ca8a04;
+  --notes-ink-rgb: 202 138 4;
+  --notes-glow: 234 179 8;
+
+  /* Light-mode flip of `--mono`. Inverse of `--ink` (which is near-black on
+   *  light) so the swatch row offers exactly one black + one white. */
+  --mono: #ffffff;
+
+  /* Light-mode swatch values - the original Vellum palette. Pastel fills sit
+   *  on near-white paper; stroke shades hold up against it without going
+   *  glaring. These are the values shapes saved before the dark variants
+   *  existed; resolveSwatchColor() recognises them and routes them through
+   *  the same var() name so existing diagrams autoswitch in dark mode. */
+  --fill-red: #fee2e2;
+  --fill-orange: #ffedd5;
+  --fill-amber: #fff3c4;
+  --fill-green: #dcfce7;
+  --fill-teal: #ccfbf1;
+  --fill-blue: #dbeafe;
+  --fill-indigo: #e0e7ff;
+  --fill-violet: #f3e8ff;
+  --fill-pink: #fce7f3;
+
+  --stroke-red: #c83e1d;
+  --stroke-orange: #ea580c;
+  --stroke-amber: #e09f3e;
+  --stroke-green: #2e8b57;
+  --stroke-teal: #0d9488;
+  --stroke-blue: #1f6feb;
+  --stroke-indigo: #4f46e5;
+  --stroke-violet: #7f3fbf;
+  --stroke-pink: #db2777;
+
+  /* Light-mode shade ladders (mirror of the dark-mode block above). The base
+   *  swatch sits at -200; -100 is the airiest tint, -500 the deepest. */
+  --fill-red-100: #fff5f5;
+  --fill-red-200: #fee2e2;
+  --fill-red-300: #fbb6b6;
+  --fill-red-400: #f47878;
+  --fill-red-500: #c83e1d;
+  --fill-amber-100: #fff9d9;
+  --fill-amber-200: #fff3c4;
+  --fill-amber-300: #fbe08b;
+  --fill-amber-400: #f3c557;
+  --fill-amber-500: #b97f1f;
+  --fill-green-100: #ecfdf2;
+  --fill-green-200: #dcfce7;
+  --fill-green-300: #a7f3c1;
+  --fill-green-400: #5dd394;
+  --fill-green-500: #2e8b57;
+  --fill-blue-100: #eef4ff;
+  --fill-blue-200: #dbeafe;
+  --fill-blue-300: #a4c4fa;
+  --fill-blue-400: #5e91f0;
+  --fill-blue-500: #1f6feb;
+  --fill-violet-100: #faf3ff;
+  --fill-violet-200: #f3e8ff;
+  --fill-violet-300: #d6b8f7;
+  --fill-violet-400: #a275d8;
+  --fill-violet-500: #7f3fbf;
+  --fill-orange-100: #fff7ed;
+  --fill-orange-200: #ffedd5;
+  --fill-orange-300: #fdba74;
+  --fill-orange-400: #fb923c;
+  --fill-orange-500: #ea580c;
+  --fill-teal-100: #f0fdfa;
+  --fill-teal-200: #ccfbf1;
+  --fill-teal-300: #99f6e4;
+  --fill-teal-400: #5eead4;
+  --fill-teal-500: #14b8a6;
+  --fill-indigo-100: #eef2ff;
+  --fill-indigo-200: #e0e7ff;
+  --fill-indigo-300: #c7d2fe;
+  --fill-indigo-400: #a5b4fc;
+  --fill-indigo-500: #6366f1;
+  --fill-pink-100: #fdf2f8;
+  --fill-pink-200: #fce7f3;
+  --fill-pink-300: #fbcfe8;
+  --fill-pink-400: #f9a8d4;
+  --fill-pink-500: #ec4899;
+
+  --stroke-red-100: #f4856b;
+  --stroke-red-200: #e25b3a;
+  --stroke-red-300: #c83e1d;
+  --stroke-red-400: #962e16;
+  --stroke-red-500: #621e0e;
+  --stroke-amber-100: #f0c282;
+  --stroke-amber-200: #e09f3e;
+  --stroke-amber-300: #b27d22;
+  --stroke-amber-400: #855d18;
+  --stroke-amber-500: #573c0f;
+  --stroke-green-100: #6dc591;
+  --stroke-green-200: #46a370;
+  --stroke-green-300: #2e8b57;
+  --stroke-green-400: #1f6840;
+  --stroke-green-500: #134526;
+  --stroke-blue-100: #6aa4ff;
+  --stroke-blue-200: #3b86f3;
+  --stroke-blue-300: #1f6feb;
+  --stroke-blue-400: #1452b3;
+  --stroke-blue-500: #0a3578;
+  --stroke-violet-100: #b07ce0;
+  --stroke-violet-200: #9555cc;
+  --stroke-violet-300: #7f3fbf;
+  --stroke-violet-400: #5d2c8d;
+  --stroke-violet-500: #3d1d5e;
+  --stroke-orange-100: #f8a05f;
+  --stroke-orange-200: #f17e30;
+  --stroke-orange-300: #ea580c;
+  --stroke-orange-400: #b54309;
+  --stroke-orange-500: #7c2d05;
+  --stroke-teal-100: #5ec5bb;
+  --stroke-teal-200: #2caa9d;
+  --stroke-teal-300: #0d9488;
+  --stroke-teal-400: #08665e;
+  --stroke-teal-500: #053f3a;
+  --stroke-indigo-100: #8b94f5;
+  --stroke-indigo-200: #6c70ed;
+  --stroke-indigo-300: #4f46e5;
+  --stroke-indigo-400: #3730a3;
+  --stroke-indigo-500: #1e1b4b;
+  --stroke-pink-100: #ec5da0;
+  --stroke-pink-200: #e63d8a;
+  --stroke-pink-300: #db2777;
+  --stroke-pink-400: #9d1d57;
+  --stroke-pink-500: #62123a;
+
+  /* Light-mode flip of the paper/ink grey ladders. Same direction (light →
+   *  deep as -100 → -500) but with bases anchored to the light canvas: paper
+   *  sits at -200 (near-white), ink at -200 (near-black). Paper's range
+   *  covers white through mid-grey; ink's range covers mid-grey through
+   *  pure black - together they span the full greyscale on light paper. */
+  --fill-paper-100: #ffffff;
+  --fill-paper-200: #f7f9fa;
+  --fill-paper-300: #d0d7de;
+  --fill-paper-400: #8b949e;
+  --fill-paper-500: #4a525c;
+  --fill-ink-100: #afb8c1;
+  --fill-ink-200: #1c1a14;
+  --fill-ink-300: #110f0a;
+  --fill-ink-400: #080704;
+  --fill-ink-500: #000000;
+  --stroke-paper-100: #ffffff;
+  --stroke-paper-200: #f7f9fa;
+  --stroke-paper-300: #d0d7de;
+  --stroke-paper-400: #8b949e;
+  --stroke-paper-500: #4a525c;
+  --stroke-ink-100: #afb8c1;
+  --stroke-ink-200: #1c1a14;
+  --stroke-ink-300: #110f0a;
+  --stroke-ink-400: #080704;
+  --stroke-ink-500: #000000;
+}

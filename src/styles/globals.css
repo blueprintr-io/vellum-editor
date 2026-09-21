@@ -1,0 +1,498 @@
+@import './fonts.css';
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    /* Default to no native text selection: Vellum is a canvas app, not a
+     * webpage. Highlighting is done via marquee + the inspector. Native
+     * selection inside chrome (a label dragged on its drag-cursor, a swatch
+     * tooltip, etc.) confuses the gesture system and looks wrong against the
+     * canvas. We re-enable selection explicitly inside places where typing
+     * happens - see the [contenteditable] rule + .vellum-text-selectable
+     * escape hatch below. */
+    user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+  }
+  /* The `-webkit-font-smoothing: antialiased` above is an inherited property,
+   * but Chrome/WebKit only honour it when painting HTML text - native SVG
+   * <text> keeps rasterising with the default (subpixel) antialiasing no
+   * matter what it inherits. That split is visible on the canvas because the
+   * two label renderers sit right next to each other: a text shape / shape
+   * body / container label / table cell paints as HTML inside a
+   * foreignObject (greyscale AA, thin), while an icon or image label,
+   * connector label, group pill, sublabel and the measurement overlay paint
+   * as SVG <text> (subpixel AA, visibly heavier stems + colour fringing on
+   * the dark canvas). Same family, same weight, same size - but the SVG side
+   * reads as a different, bolder typeface. Restating the declaration on SVG
+   * text is what actually reaches the SVG paint path, so both renderers
+   * rasterise identically. */
+  svg text,
+  svg tspan {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Re-enable selection for typing surfaces. contentEditable elements in the
+   * inline label/cell/connector editors need actual selection so the bold /
+   * italic / underline / select-all / drag-to-select text affordances work.
+   * Explicit form inputs already get sensible browser defaults but we set
+   * user-select on them too so a parent that disables selection doesn't leak
+   * onto them. */
+  [contenteditable='true'],
+  [contenteditable=''],
+  input,
+  textarea,
+  select,
+  .vellum-text-selectable {
+    user-select: text;
+    -webkit-user-select: text;
+    -ms-user-select: text;
+  }
+  button {
+    font-family: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  /* Floating chrome treatment - used by toolbar, popover, brand, inspector, docks.
+   * The drop shadow is the ONLY drop shadow allowed; floating panels sit over the
+   * paper canvas, so they earn the shadow. Anywhere else, use shadow-blueprint. */
+  .float {
+    background: rgb(var(--bg-rgb) / 0.92);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgb(0 0 0 / 0.18), 0 0 0 1px rgb(0 0 0 / 0.04);
+  }
+
+  html.theme-light .float {
+    box-shadow: 0 2px 8px rgb(36 41 47 / 0.06), 0 0 0 1px rgb(36 41 47 / 0.04);
+  }
+
+  /* Top-left brand pill. Both clamps are percentages of the EDITOR PANE (the
+   * inset wrapper it's absolutely positioned in), so they shrink with the
+   * right dock instead of measuring a viewport the dock has already taken a
+   * bite out of. The title inside is `truncate`, so a tight clamp ellipsises
+   * the filename rather than pushing the pill under its neighbour.
+   *
+   * `--vellum-brand-budget` IS that number, computed once in useChromeFit
+   * (`brandBudget`) so the cap here and the `data-brand-full` decision that
+   * sheds the pill's trimmings can't disagree about how much room there is.
+   * The fallbacks are the same arithmetic inline - narrow row: the pill
+   * shares with the actions cluster, so it stops short of it (38px is the two
+   * 14px pane insets plus a 10px gap); wide row: the toolbar is centred, so
+   * the pill gets half the pane minus half the toolbar, less its inset and
+   * the same gap. They hold the first frame, before the measure pass runs. */
+  .brand-pill {
+    max-width: var(
+      --vellum-brand-budget,
+      calc(100% - var(--vellum-actions-w, 180px) - 38px)
+    );
+  }
+  [data-pane-wide] .brand-pill {
+    max-width: var(
+      --vellum-brand-budget,
+      calc(50% - var(--vellum-toolbar-w, 520px) / 2 - 24px)
+    );
+  }
+
+  /* Inspector field grid - label column + control column.
+   *
+   * 72 + 6 (was the micro-spec's 70 + 8): the 280px panel has a 1px border
+   * and 14px side padding, so 250px of content; minus 72 + 6 leaves a 172px
+   * control column, which is exactly seven 22px swatch cells on a 3px gap -
+ * the swatch grid, the sliders, the segmented controls and the selects all
+   * end on the same right edge. 72px is also what fits the widest value chip
+   * (`orange-300 ×`, see .reset-chip) under its key without truncating. */
+  .field {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .field-label {
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .field-input {
+    padding: 5px 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg);
+    font-size: 11px;
+    font-family: var(--font-body);
+    width: 100%;
+  }
+
+  .field-input.mono {
+    font-family: var(--font-mono);
+  }
+
+  /* Two-line label variant - key on the first line, live value chip on the
+   * second (see Field's `meta` slot). Top-aligned so the label hugs the top
+   * of a tall control (the 2-row swatch grid) instead of floating in its
+   * middle; the 3px offset optically aligns the key with the first cell row. */
+  .field-top {
+    align-items: start;
+  }
+  .field-label-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding-top: 3px;
+  }
+
+  /* Reset chip - the value readout under a field label. Two states via
+   * data-auto: following the default (muted, inert) or explicitly set
+   * (accent-tinted, click to reset). Kept to a single line at 9px mono so
+   * even `orange-300 ×` fits inside the 72px label column. */
+  .reset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 100%;
+    padding: 2px 3px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-subtle);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    cursor: pointer;
+  }
+  .reset-chip[data-auto='true'] {
+    color: var(--fg-muted);
+    cursor: default;
+  }
+  .reset-chip[data-auto='false'] {
+    border-color: rgb(var(--accent-rgb) / 0.45);
+    background: rgb(var(--accent-rgb) / 0.1);
+  }
+  .reset-chip[data-auto='false']:hover {
+    background: rgb(var(--accent-rgb) / 0.2);
+  }
+  .reset-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reset-chip-x {
+    color: var(--fg-muted);
+    font-size: 10px;
+    line-height: 1;
+  }
+  .reset-chip[data-auto='false']:hover .reset-chip-x {
+    color: var(--fg);
+  }
+
+  /* Section header disclosure - the header row is the toggle. */
+  .section-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    border: none;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    text-align: left;
+  }
+  .section-toggle:hover {
+    color: var(--fg);
+  }
+  .section-caret {
+    display: inline-block;
+    font-size: 9px;
+    line-height: 1;
+    transition: transform 120ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .section-caret,
+    .swatch-caret {
+      transition: none;
+    }
+  }
+  .section-caret[data-collapsed='true'] {
+    transform: rotate(-90deg);
+  }
+
+  /* Swatch cell + its shade caret. The caret badge only shows while the
+   * cell is hovered / focused (or while its shade picker is open) - 33
+   * always-on badges read as noise, and right-click / long-press already
+   * open the same ladder. Pointer-less devices can't hover, so the badge
+   * stays visible there. */
+  .swatch-caret {
+    opacity: 0;
+    transition: opacity 100ms ease;
+  }
+  /* :focus-visible (not :focus-within) so a mouse click doesn't leave the
+   * badge lit on the last-clicked cell - keyboard focus still reveals it. */
+  .swatch-cell:hover .swatch-caret,
+  .swatch-cell:has(:focus-visible) .swatch-caret,
+  .swatch-caret[data-open='true'] {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .swatch-caret {
+      opacity: 1;
+    }
+  }
+
+  /* Editable slider readout - right-aligned mono field at the end of every
+   * RangeField. `data-auto` mutes it while the value is following the
+   * default so the row reads: dimmed track + "auto" = not set. */
+  .range-value {
+    height: 18px;
+    padding: 0 5px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    outline: none;
+  }
+  .range-value[data-auto='true'] {
+    color: var(--fg-muted);
+  }
+  .range-value:focus {
+    border-color: var(--accent);
+    color: var(--fg);
+  }
+
+  /* Segmented control - used everywhere in the inspector. */
+  .seg {
+    display: flex;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px;
+    width: 100%;
+  }
+
+  .seg button {
+    flex: 1;
+    padding: 4px 4px;
+    background: transparent;
+    border: none;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    border-radius: 3px;
+    /* Center children - `text-align: center` covers text labels but block
+     * SVG icons (StrokeStyleIcon, the arrow glyphs) inherit left-alignment
+     * from the button's default inline-block layout. Flex centring works
+     * for both. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .seg button.active {
+    background: var(--bg-emphasis);
+    color: var(--fg);
+  }
+
+  /* Metadata key/value rows. */
+  .metadata-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .metadata-row .k {
+    color: var(--fg-muted);
+    padding: 4px 6px;
+    background: var(--bg-subtle);
+    border-radius: 3px;
+  }
+  .metadata-row .v {
+    color: var(--fg);
+    padding: 4px 6px;
+    background: var(--bg-subtle);
+    border-radius: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* One-shot ring for the "I just snapped" feedback when a connector
+   * endpoint clicks onto a shape during creation. Subtle by design - a
+   * single quick expanding ring that fades fully to 0 (no leftover dot,
+   * no halo). Driven by a keyed remount so the animation runs once per
+   * snap-target change. */
+  @keyframes vellum-snap-pulse {
+    0% {
+      opacity: 0.5;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.3);
+    }
+  }
+
+  /* Hover-to-connect. While the cursor rests on a connection point, a ring
+   * grows around it over the wait - the canvas sets animation-duration inline
+   * from that wait (PORT_DWELL_MS, or PORT_DWELL_SNAP_MS with Shape Snapping
+   * on), so the ring is full size exactly when the end attaches. Then it
+   * pops: the ring bursts outward as it fades, and the dot bounces. Keyed
+   * remounts, like the snap pulse. */
+  @keyframes vellum-dwell-grow {
+    0% {
+      opacity: 0.45;
+      transform: scale(0.25);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes vellum-dwell-pop {
+    0% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.9);
+    }
+  }
+  @keyframes vellum-dwell-pop-dot {
+    0% {
+      transform: scale(1);
+    }
+    40% {
+      transform: scale(2.2);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .vellum-dwell-grow {
+    animation: vellum-dwell-grow 500ms linear forwards;
+  }
+  .vellum-dwell-pop {
+    animation: vellum-dwell-pop 320ms ease-out forwards;
+  }
+  .vellum-dwell-pop-dot {
+    animation: vellum-dwell-pop-dot 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Marching dashes for `animated` connectors. The shift distance per
+   * cycle MUST equal the sum of one dash + one gap, otherwise the
+   * pattern visibly resets at the seam. Dashed uses "5 3" (sum 8, fixed);
+   * dotted uses "0 N" where N = strokeWidth × 4 - round caps render the
+   * 0-dashes as circles, and the renderer sets --vellum-flow-period
+   * inline so the march keeps pace with the dynamic gap. Two flavours ×
+   * two directions = four classes; the forward variant flows from→to. */
+  @keyframes vellum-connector-flow-dashed-fwd {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: -8; }
+  }
+  @keyframes vellum-connector-flow-dashed-rev {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: 8; }
+  }
+  /* Period = one dot gap; --vellum-flow-period is set inline on the path so
+   * the march scales with strokeWidth (dotGap = strokeWidth × 4). */
+  @keyframes vellum-connector-flow-dotted-fwd {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: calc(-1 * var(--vellum-flow-period, 5px)); }
+  }
+  @keyframes vellum-connector-flow-dotted-rev {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: var(--vellum-flow-period, 5px); }
+  }
+  .vellum-flow-dashed-fwd {
+    animation: vellum-connector-flow-dashed-fwd 0.6s linear infinite;
+  }
+  .vellum-flow-dashed-rev {
+    animation: vellum-connector-flow-dashed-rev 0.6s linear infinite;
+  }
+  .vellum-flow-dotted-fwd {
+    animation: vellum-connector-flow-dotted-fwd 0.5s linear infinite;
+  }
+  .vellum-flow-dotted-rev {
+    animation: vellum-connector-flow-dotted-rev 0.5s linear infinite;
+  }
+
+  /* Motion policy.
+   *
+   * The prism gradient's own reduced-motion handling is NOT here and cannot
+   * be: SVG SMIL animations aren't gated by this media query in any browser.
+   * Prism is gated in React instead - useReducedMotion() feeds <PrismDefs
+   * reduced> and the pulse wrapper in Shape.tsx, which omit their <animate*>
+   * children entirely and park the ramp mid-cycle.
+   *
+   * This block covers the CSS-driven connector flows, which have been
+   * ungated since they shipped. The dashes hold still; the dash PATTERN
+   * (the user's .style choice) is untouched. It also covers the
+   * hover-to-connect ring, which shows at full size for the wait and
+   * skips the pop (the burst ring rests at opacity 0). */
+  @media (prefers-reduced-motion: reduce) {
+    .vellum-flow-dashed-fwd,
+    .vellum-flow-dashed-rev,
+    .vellum-flow-dotted-fwd,
+    .vellum-flow-dotted-rev,
+    .vellum-dwell-grow,
+    .vellum-dwell-pop,
+    .vellum-dwell-pop-dot {
+      animation: none;
+    }
+  }
+
+  /* Kbd hint - used in popover search + footer. */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    background: var(--bg-emphasis);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--fg-muted);
+    line-height: 1.4;
+  }
+}

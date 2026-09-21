@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability granted to the main window. The dialog and fs plugins back the File System Access polyfill that src-tauri/src/lib.rs injects (DESKTOP_FILES_JS): .vellum files and PNG/SVG exports are opened and saved through the OS file picker, and the dialog plugin adds every picked path to the fs scope at pick time — so no static path allow-list is needed and nothing outside a user-picked file is reachable. core:window:allow-start-dragging backs the macOS drag region: src/editor/Editor.tsx renders a `data-tauri-drag-region` strip under the Overlay title bar, and Tauri's built-in drag script turns a mousedown on it into `plugin:window|start_dragging` — a command that core:window:default does NOT include, so without this grant the ACL rejects it and the window cannot be moved (1.0–1.7.4 shipped that way). Double-click maximise uses `internal_toggle_maximize`, which the default set already grants.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-file",
+    "fs:allow-write-file"
+  ]
+}

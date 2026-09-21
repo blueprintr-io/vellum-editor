@@ -1,0 +1,4 @@
+# Tauri build artifacts
+/target/
+/security-tests/target/
+/gen/schemas/

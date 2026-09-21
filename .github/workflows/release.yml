@@ -1,0 +1,1188 @@
+name: Release
+
+# Build installers into a draft release. Promote GitHub and the download mirror
+# after preflight and every required platform test have passed.
+# downloads.blueprintr.io remains the canonical installer and updater channel.
+#
+# Triggers:
+#   - tag push vX.Y.Z            (manual release cut)
+#   - workflow_call from auto-release.yml (fires for every Core build input)
+#   - workflow_dispatch          (verify/publish an unpublished current tag)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (e.g. v1.7.0). Must already exist.'
+        required: true
+        type: string
+      source_sha:
+        description: 'Full peeled commit SHA the auto-release planner tagged.'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Unpublished tag at current main HEAD, e.g. v1.7.0'
+        required: true
+        type: string
+      source_sha:
+        description: 'Optional full peeled tag commit SHA to assert'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: vellum-core-release-channel
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Preflight ───────────────────────────────────────────────────────
+  # Fail-closed BEFORE burning 30+ minutes of matrix time. The pubkey is
+  # baked into every shipped binary; building without it produces
+  # installs whose updater can never verify a manifest.
+  preflight:
+    name: preflight (identity + monotonicity + secrets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      live_version: ${{ steps.identity.outputs.live_version }}
+      live_etag: ${{ steps.identity.outputs.live_etag }}
+    steps:
+      - name: Verify signing + deploy secrets
+        env:
+          PRIV: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUB:  ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          ROLE: ${{ secrets.AWS_DOWNLOADS_PUBLISH_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "$PRIV" ]; then echo "::error::TAURI_SIGNING_PRIVATE_KEY repo secret is empty or unset"; missing=1; fi
+          if [ -z "$PUB"  ]; then echo "::error::TAURI_SIGNING_PUBLIC_KEY repo secret is empty or unset (updater pubkey - generate with 'npx tauri signer generate' if you do not have the pair)"; missing=1; fi
+          if [ -z "$ROLE" ]; then echo "::error::AWS_DOWNLOADS_PUBLISH_ROLE_ARN is empty or unset"; missing=1; fi
+          [ "$missing" -eq 0 ] || exit 1
+
+      - id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          if ! printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::'$TAG' is not a plain vX.Y.Z tag"
+            exit 1
+          fi
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup pinned Node release tooling
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.20.2
+
+      - name: Install pinned release dependencies + minisign verifier
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Typecheck, unit tests, and browser tests
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npx --no-install playwright install --with-deps chromium
+          npm run test:e2e
+          npm run build:public
+          npm run check:artifacts
+          node scripts/check-license-notices.mjs dist/DEPENDENCY-LICENSES.json
+
+      - name: Dependency advisory gate
+        run: |
+          set -euo pipefail
+          npm audit --audit-level=low
+          node scripts/check-glib-backport.mjs
+          sudo apt-get install -y libglib2.0-dev pkg-config
+          cargo test --release --locked --manifest-path src-tauri/security-tests/Cargo.toml
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file src-tauri/Cargo.lock --deny unsound
+
+      - name: Require an unpublished GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases" > releases.json
+          jq -e --arg tag "$TAG" '[.[][] | select(.tag_name == $tag)] | all(.draft == true)' releases.json
+
+      - name: Prove updater key pair and live-key continuity
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          LIVE_UPDATER: https://downloads.blueprintr.io/core/updater.json
+        run: |
+          set -euo pipefail
+          probe_dir=$(mktemp -d)
+          trap 'rm -rf "$probe_dir"' EXIT
+          printf '%s\n' 'Vellum Core updater key continuity probe' > "$probe_dir/probe"
+
+          # Tauri stores its minisign key/signature boxes as base64. Sign a
+          # local probe with the private secret, decode both public inputs,
+          # and verify them with an independent minisign implementation.
+          npx --no-install tauri signer sign "$probe_dir/probe" >/dev/null
+          tr -d '\r\n' < "$probe_dir/probe.sig" \
+            | base64 --decode > "$probe_dir/probe.minisig"
+          printf '%s' "$TAURI_SIGNING_PUBLIC_KEY" \
+            | tr -d '\r\n' \
+            | base64 --decode > "$probe_dir/minisign.pub"
+          minisign -Vm "$probe_dir/probe" \
+            -p "$probe_dir/minisign.pub" \
+            -x "$probe_dir/probe.minisig" \
+            -q
+
+          # Pair agreement alone would allow a silent rotation that strands
+          # every installed client. Verify a currently-live signed payload
+          # with the same public key to anchor continuity to shipped clients.
+          live_json="$probe_dir/live-updater.json"
+          curl --fail --silent --show-error --location \
+            --retry 4 --retry-all-errors \
+            "$LIVE_UPDATER" -o "$live_json"
+          live_url=$(jq -er '.platforms["windows-x86_64"].url' "$live_json")
+          live_sig=$(jq -er '.platforms["windows-x86_64"].signature' "$live_json")
+          printf '%s' "$live_sig" \
+            | tr -d '\r\n' \
+            | base64 --decode > "$probe_dir/live.minisig"
+          curl --fail --silent --show-error --location \
+            --retry 4 --retry-all-errors \
+            "$live_url" -o "$probe_dir/live-payload"
+          minisign -Vm "$probe_dir/live-payload" \
+            -p "$probe_dir/minisign.pub" \
+            -x "$probe_dir/live.minisig" \
+            -q
+
+          fingerprint=$(printf '%s' "$TAURI_SIGNING_PUBLIC_KEY" \
+            | tr -d '\r\n' \
+            | sha256sum \
+            | awk '{print $1}')
+          echo "Updater key pair + live continuity verified (public-key sha256: $fingerprint)."
+
+      - id: identity
+        name: Assert tag, source, main, version floor, and live channel agree
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          LIVE_UPDATER: https://downloads.blueprintr.io/core/updater.json
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags --force
+
+          SOURCE_SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-list -n1 "$TAG")
+          REMOTE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$TAG_SHA" != "$SOURCE_SHA" ]; then
+            echo "::error::$TAG peels to $TAG_SHA but checkout is $SOURCE_SHA"
+            exit 1
+          fi
+          if [ -n "$EXPECTED_SOURCE_SHA" ] && [ "$EXPECTED_SOURCE_SHA" != "$SOURCE_SHA" ]; then
+            echo "::error::planner expected $EXPECTED_SOURCE_SHA but $TAG points at $SOURCE_SHA"
+            exit 1
+          fi
+          if [ "$SOURCE_SHA" != "$REMOTE_MAIN_SHA" ]; then
+            echo "::error::$TAG points at $SOURCE_SHA, not current main $REMOTE_MAIN_SHA"
+            exit 1
+          fi
+
+          # Source metadata must be internally synchronized, but can lag the
+          # release tag: the matrix injects the monotonic tag version without
+          # creating a provenance-breaking release-only source commit.
+          node scripts/version-sync.mjs --check
+
+          PREVIOUS_TAG=$(
+            git tag --list \
+              | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+              | grep -Fvx "$TAG" \
+              | sort -V \
+              | tail -n1 || true
+          )
+          if [ -n "$PREVIOUS_TAG" ]; then
+            node scripts/version-sync.mjs \
+              --candidate "$VERSION" --assert-newer-than "${PREVIOUS_TAG#v}" >/dev/null
+          fi
+
+          live_json=$(mktemp)
+          live_headers=$(mktemp)
+          curl --fail --silent --show-error --location --retry 4 \
+            --retry-all-errors \
+            --header 'Cache-Control: no-cache' \
+            --header 'Pragma: no-cache' \
+            --dump-header "$live_headers" \
+            "$LIVE_UPDATER" -o "$live_json"
+          LIVE_VERSION=$(jq -er '.version' "$live_json")
+          LIVE_ETAG=$(tr -d '\r' < "$live_headers" \
+            | awk 'tolower($1) == "etag:" { print $2 }' \
+            | tail -n1)
+          if [ -z "$LIVE_ETAG" ]; then
+            echo "::error::$LIVE_UPDATER returned no ETag; cannot protect the channel with compare-and-swap"
+            exit 1
+          fi
+          node scripts/version-sync.mjs \
+            --candidate "$VERSION" --assert-newer-than "$LIVE_VERSION" >/dev/null
+
+          {
+            echo "source_sha=$SOURCE_SHA"
+            echo "live_version=$LIVE_VERSION"
+            echo "live_etag=$LIVE_ETAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Validated $TAG -> $SOURCE_SHA above live $LIVE_VERSION."
+
+  # ── Matrix build ────────────────────────────────────────────────────
+  # One universal macOS leg (aarch64 + x86_64 lipo'd) instead of two
+  # per-arch legs: halves the mac runner time and produces the single
+  # `_universal.dmg` the download page links to.
+  build:
+    name: build (${{ matrix.label }})
+    needs: preflight
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-universal
+            platform: macos-latest
+            args: --target universal-apple-darwin
+          - label: windows-x64
+            platform: windows-latest
+            args: ''
+          - label: linux-amd64
+            platform: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      # Pinned to full commit SHAs: this workflow holds the updater
+      # signing key + an AWS role; a hijacked floating tag on any action
+      # could exfiltrate them.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Assert checked-out source and inject release version
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [ "$ACTUAL_SHA" != "$SOURCE_SHA" ]; then
+            echo "::error::matrix checked out $ACTUAL_SHA, expected $SOURCE_SHA"
+            exit 1
+          fi
+          node scripts/version-sync.mjs --check
+          node scripts/version-sync.mjs --set "$VERSION"
+          node scripts/version-sync.mjs --expected "$VERSION"
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # action pinned 2026-06-13
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.20.2
+
+      - name: Install JS dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Inject updater pubkey into tauri.conf.json
+        shell: bash
+        env:
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const path = "src-tauri/tauri.conf.json";
+            const cfg = JSON.parse(fs.readFileSync(path, "utf8"));
+            cfg.plugins = cfg.plugins || {};
+            cfg.plugins.updater = cfg.plugins.updater || {};
+            cfg.plugins.updater.pubkey = process.env.TAURI_SIGNING_PUBLIC_KEY;
+            fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+            console.log("pubkey =", cfg.plugins.updater.pubkey.slice(0, 32) + "...");
+          '
+
+      - name: Build and stage draft GitHub Release
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.preflight.outputs.tag }}
+          releaseName: 'Vellum Core ${{ needs.preflight.outputs.tag }}'
+          releaseBody: |
+            Public downloads for this release are served from
+            https://blueprintr.io/download (assets below mirror to
+            downloads.blueprintr.io/core/ automatically).
+
+            Source commit: ${{ needs.preflight.outputs.source_sha }}
+
+            Running Vellum Core 1.6.0 or later? It checks for updates on
+            launch and once a day, and will prompt you to install this
+            version. 1.5.0 and earlier have no updater - re-download from
+            the page above once.
+          releaseDraft: true
+          prerelease: false
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
+
+      # Windows and Linux launch the built app and check its desktop file APIs.
+      # A failure leaves assets private in the draft release. macOS has no
+      # WebDriver backend; its injected file APIs are checked in unit tests.
+      - name: Install tauri-driver
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: cargo install tauri-driver --locked --version 2.0.6
+
+      - name: Linux WebDriver deps (WebKitWebDriver + Xvfb)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: sudo apt-get install -y webkit2gtk-driver xvfb
+
+      - name: Windows WebDriver (msedgedriver matching the WebView2 runtime)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The Evergreen WebView2 runtime records its version under the
+          # EdgeUpdate client GUID; msedgedriver must match it (major at
+          # minimum) or the session handshake fails with a version error.
+          $keys = @(
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+            'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          )
+          $ver = $null
+          foreach ($k in $keys) {
+            if (Test-Path $k) { $ver = (Get-ItemProperty $k).pv; if ($ver) { break } }
+          }
+          if (-not $ver) { throw 'WebView2 Evergreen runtime not found in the registry' }
+          Write-Host "WebView2 runtime $ver"
+          $major = $ver.Split('.')[0]
+          $out = Join-Path $env:RUNNER_TEMP 'msedgedriver'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $zip = Join-Path $out 'edgedriver_win64.zip'
+          try {
+            Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip" -OutFile $zip
+          } catch {
+            # No driver build for this exact runtime build: take the newest
+            # driver for the same major, which the WebDriver protocol accepts.
+            $latestFile = Join-Path $out 'latest.txt'
+            Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/LATEST_RELEASE_${major}_WINDOWS" -OutFile $latestFile
+            $bytes = [System.IO.File]::ReadAllBytes($latestFile)
+            $latest = ([System.Text.Encoding]::Unicode.GetString($bytes)).Trim([char]0xFEFF).Trim()
+            Write-Host "exact driver build unavailable; using $latest for major $major"
+            Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$latest/edgedriver_win64.zip" -OutFile $zip
+          }
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $drv = Join-Path $out 'msedgedriver.exe'
+          if (-not (Test-Path $drv)) { throw 'msedgedriver.exe missing after unzip' }
+          & $drv --version
+          "NATIVE_DRIVER=$drv" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Smoke-test the built app (WebDriver)
+        if: matrix.platform != 'macos-latest'
+        shell: bash
+        env:
+          VELLUM_CORE_DISABLE_UPDATER: '1'
+          EXPECT_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            windows-latest)
+              APP=$(find src-tauri/target -type f -name 'vellum-desktop.exe' -path '*/release/*' ! -path '*/bundle/*' | head -n1)
+              [ -n "$APP" ] || { echo "::error::release binary not found under src-tauri/target"; exit 1; }
+              node scripts/e2e/webdriver-smoke.mjs --app "$APP" --native-driver "$NATIVE_DRIVER" --expect-version "$EXPECT_VERSION"
+              ;;
+            *)
+              APP=$(find src-tauri/target -type f -name 'vellum-desktop' -path '*/release/*' ! -path '*/bundle/*' -perm -u+x | head -n1)
+              [ -n "$APP" ] || { echo "::error::release binary not found under src-tauri/target"; exit 1; }
+              xvfb-run -a node scripts/e2e/webdriver-smoke.mjs --app "$APP" --expect-version "$EXPECT_VERSION"
+              ;;
+          esac
+
+      - name: Upload smoke-test screenshots
+        if: always() && matrix.platform != 'macos-latest'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: smoke-${{ matrix.label }}
+          path: e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ── Mirror to downloads.blueprintr.io ───────────────────────────────
+  # Downloads the release assets tauri-action just uploaded, renames them
+  # to the stable names the download page links to, uploads versioned +
+  # /core/latest/ copies, regenerates /core/updater.json LAST, and
+  # invalidates CloudFront. Mirrors the blueprintr repo's
+  # vellum-desktop.yml publish job so both clients follow one layout:
+  #   /core/<version>/<canonical-file>   (immutable, long TTL)
+  #   /core/latest/<canonical-file>      (overwritten each release)
+  #   /core/updater.json                 (Tauri updater manifest)
+  publish-downloads:
+    name: promote verified release and download mirror
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      EXPECTED_LIVE_VERSION: ${{ needs.preflight.outputs.live_version }}
+      EXPECTED_LIVE_ETAG: ${{ needs.preflight.outputs.live_etag }}
+    steps:
+      - name: Download release assets
+        run: |
+          set -euo pipefail
+          mkdir -p _assets
+          gh release download "$TAG" --dir _assets --repo "$GITHUB_REPOSITORY"
+          ls -la _assets
+
+      - name: Stage canonical filenames
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p _out
+          # exactly_one <glob> - the release must contain exactly one
+          # matching asset or the canonical name would be ambiguous.
+          exactly_one() {
+            local matches
+            mapfile -t matches < <(compgen -G "_assets/$1")
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::expected exactly one release asset matching '$1', found ${#matches[@]}" >&2
+              exit 1
+            fi
+            echo "${matches[0]}"
+          }
+          # stage <file> <canonical-suffix> - versioned + latest alias.
+          stage() {
+            cp "$1" "_out/Vellum-Core_${VERSION}_$2"
+            cp "$1" "_out/Vellum-Core_$2"
+          }
+          # Assign-then-stage (rather than inline substitution) so a
+          # failed lookup aborts with exactly_one's error message.
+          DMG=$(exactly_one '*.dmg');                stage "$DMG"     universal.dmg
+          TARGZ=$(exactly_one '*.app.tar.gz');       stage "$TARGZ"   universal.app.tar.gz
+          TARSIG=$(exactly_one '*.app.tar.gz.sig');  stage "$TARSIG"  universal.app.tar.gz.sig
+          EXE=$(exactly_one '*-setup.exe');          stage "$EXE"     x64-setup.exe
+          EXESIG=$(exactly_one '*-setup.exe.sig');   stage "$EXESIG"  x64-setup.exe.sig
+          API=$(exactly_one '*.AppImage');           stage "$API"     amd64.AppImage
+          APISIG=$(exactly_one '*.AppImage.sig');    stage "$APISIG"  amd64.AppImage.sig
+          # Optional formats: mirrored when present, never required.
+          # (if-form, not `[ ] &&` - a false condition would trip set -e.)
+          deb=( _assets/*.deb )
+          if [ "${#deb[@]}" -eq 1 ]; then stage "${deb[0]}" amd64.deb; fi
+          msi=( _assets/*.msi )
+          if [ "${#msi[@]}" -eq 1 ]; then stage "${msi[0]}" x64.msi; fi
+          ls -la _out
+
+      - name: Generate core updater.json
+        run: |
+          set -euo pipefail
+          read_sig() { tr -d '\r\n' < "$1"; }
+          read_sha256() { sha256sum "$1" | awk '{print $1}'; }
+          MAC_SIG=$(read_sig "_out/Vellum-Core_${VERSION}_universal.app.tar.gz.sig")
+          EXE_SIG=$(read_sig "_out/Vellum-Core_${VERSION}_x64-setup.exe.sig")
+          APP_SIG=$(read_sig "_out/Vellum-Core_${VERSION}_amd64.AppImage.sig")
+          MAC_SHA=$(read_sha256 "_out/Vellum-Core_${VERSION}_universal.dmg")
+          EXE_SHA=$(read_sha256 "_out/Vellum-Core_${VERSION}_x64-setup.exe")
+          APP_SHA=$(read_sha256 "_out/Vellum-Core_${VERSION}_amd64.AppImage")
+          BASE="https://downloads.blueprintr.io/core/${VERSION}"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          ARTIFACTS='{}'
+          for f in "_out/Vellum-Core_${VERSION}_"*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            url="$BASE/$name"
+            sha=$(read_sha256 "$f")
+            ARTIFACTS=$(jq -c \
+              --arg name "$name" \
+              --arg url "$url" \
+              --arg sha "$sha" \
+              '. + {($name): {url: $url, sha256: $sha}}' \
+              <<<"$ARTIFACTS")
+          done
+          jq -n \
+            --arg version  "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg pub_date "$PUB_DATE" \
+            --arg mac_sig  "$MAC_SIG" \
+            --arg exe_sig  "$EXE_SIG" \
+            --arg app_sig  "$APP_SIG" \
+            --arg mac_sha  "$MAC_SHA" \
+            --arg exe_sha  "$EXE_SHA" \
+            --arg app_sha  "$APP_SHA" \
+            --arg mac_url  "$BASE/Vellum-Core_${VERSION}_universal.app.tar.gz" \
+            --arg exe_url  "$BASE/Vellum-Core_${VERSION}_x64-setup.exe" \
+            --arg app_url  "$BASE/Vellum-Core_${VERSION}_amd64.AppImage" \
+            --arg mac_download_url "$BASE/Vellum-Core_${VERSION}_universal.dmg" \
+            --arg exe_download_url "$BASE/Vellum-Core_${VERSION}_x64-setup.exe" \
+            --arg app_download_url "$BASE/Vellum-Core_${VERSION}_amd64.AppImage" \
+            --argjson artifacts "$ARTIFACTS" '
+            {
+              version: $version,
+              source_sha: $source_sha,
+              notes: "Vellum Core update.",
+              pub_date: $pub_date,
+              downloads: {
+                mac:   { url: $mac_download_url, sha256: $mac_sha },
+                win:   { url: $exe_download_url, sha256: $exe_sha },
+                linux: { url: $app_download_url, sha256: $app_sha }
+              },
+              artifacts: $artifacts,
+              platforms: {
+                "darwin-x86_64":  { signature: $mac_sig, url: $mac_url },
+                "darwin-aarch64": { signature: $mac_sig, url: $mac_url },
+                "windows-x86_64": { signature: $exe_sig, url: $exe_url },
+                "linux-x86_64":   { signature: $app_sig, url: $app_url }
+              }
+            }' > updater.json
+          # Refuse incomplete provenance, updater signatures, or human
+          # download metadata before the public channel can reference it.
+          jq -e \
+            --arg version "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" '
+              ("https://downloads.blueprintr.io/core/" + $version) as $base |
+              .version == $version and
+              .source_sha == $source_sha and
+              (.source_sha | test("^[0-9a-f]{40}$")) and
+              (.platforms | to_entries | all(.value.signature | length > 0)) and
+              (.platforms | keys | sort) == ([
+                "darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"
+              ] | sort) and
+              .platforms["darwin-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_universal.app.tar.gz") and
+              .platforms["darwin-aarch64"].url == ($base + "/Vellum-Core_" + $version + "_universal.app.tar.gz") and
+              .platforms["windows-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_x64-setup.exe") and
+              .platforms["linux-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_amd64.AppImage") and
+              (.downloads | to_entries | length == 3) and
+              .downloads.mac.url == ($base + "/Vellum-Core_" + $version + "_universal.dmg") and
+              .downloads.win.url == ($base + "/Vellum-Core_" + $version + "_x64-setup.exe") and
+              .downloads.linux.url == ($base + "/Vellum-Core_" + $version + "_amd64.AppImage") and
+              (.downloads | to_entries | all(
+                (.value.url | startswith($base + "/")) and
+                (.value.sha256 | test("^[0-9a-f]{64}$"))
+              )) and
+              (.artifacts | length >= 7) and
+              (.artifacts | to_entries | all(
+                (.value.url | startswith($base + "/")) and
+                (.value.sha256 | test("^[0-9a-f]{64}$"))
+              ))
+            ' updater.json >/dev/null
+          staged_count=0
+          for f in "_out/Vellum-Core_${VERSION}_"*; do
+            [ -e "$f" ] || continue
+            staged_count=$((staged_count + 1))
+            name=$(basename "$f")
+            url="$BASE/$name"
+            sha=$(read_sha256 "$f")
+            jq -e \
+              --arg name "$name" \
+              --arg url "$url" \
+              --arg sha "$sha" \
+              '.artifacts[$name].url == $url and .artifacts[$name].sha256 == $sha' \
+              updater.json >/dev/null
+          done
+          test "$(jq '.artifacts | length' updater.json)" -eq "$staged_count"
+          cat updater.json
+
+      - name: Verify all staged signatures and signing-key continuity
+        env:
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          LIVE_UPDATER: https://downloads.blueprintr.io/core/updater.json
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          verify_dir=$(mktemp -d)
+          trap 'rm -rf "$verify_dir"' EXIT
+
+          printf '%s' "$TAURI_SIGNING_PUBLIC_KEY" \
+            | tr -d '\r\n' \
+            | base64 --decode > "$verify_dir/minisign.pub"
+          verify_envelope() {
+            local payload=$1
+            local envelope=$2
+            local label=$3
+            local decoded="$verify_dir/${label}.minisig"
+            tr -d '\r\n' < "$envelope" \
+              | base64 --decode > "$decoded"
+            minisign -Vm "$payload" \
+              -p "$verify_dir/minisign.pub" \
+              -x "$decoded" \
+              -q
+            echo "Verified staged updater signature: $label"
+          }
+
+          # These are the exact three payloads updater.json exposes. Verifying
+          # all of them proves every matrix signer used the public key injected
+          # into the shipped clients.
+          verify_envelope \
+            "_out/Vellum-Core_${VERSION}_universal.app.tar.gz" \
+            "_out/Vellum-Core_${VERSION}_universal.app.tar.gz.sig" \
+            mac
+          verify_envelope \
+            "_out/Vellum-Core_${VERSION}_x64-setup.exe" \
+            "_out/Vellum-Core_${VERSION}_x64-setup.exe.sig" \
+            windows
+          verify_envelope \
+            "_out/Vellum-Core_${VERSION}_amd64.AppImage" \
+            "_out/Vellum-Core_${VERSION}_amd64.AppImage.sig" \
+            linux
+
+          # Anchor the new release to the key trusted by already-installed
+          # clients. A simultaneous secret rotation still fails here even if
+          # its new private/public pair agrees internally.
+          live_json="$verify_dir/live-updater.json"
+          curl --fail --silent --show-error --location \
+            --retry 4 --retry-all-errors \
+            "$LIVE_UPDATER" -o "$live_json"
+          live_url=$(jq -er '.platforms["windows-x86_64"].url' "$live_json")
+          live_sig=$(jq -er '.platforms["windows-x86_64"].signature' "$live_json")
+          printf '%s' "$live_sig" \
+            | tr -d '\r\n' \
+            | base64 --decode > "$verify_dir/live.minisig"
+          curl --fail --silent --show-error --location \
+            --retry 4 --retry-all-errors \
+            "$live_url" -o "$verify_dir/live-payload"
+          minisign -Vm "$verify_dir/live-payload" \
+            -p "$verify_dir/minisign.pub" \
+            -x "$verify_dir/live.minisig" \
+            -q
+          echo "Signing public key verified against the live update channel."
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@f24d7193d98baebaeacc7e2227925dd47cc267f5 # v4.2.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DOWNLOADS_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve downloads bucket + CloudFront distribution id
+        id: aws
+        run: |
+          set -euo pipefail
+          BUCKET=$(aws s3api list-buckets \
+            --query "Buckets[?starts_with(Name, 'blueprintr-prod-downloads-')].Name | [0]" \
+            --output text)
+          DIST_ID=$(aws cloudfront list-distributions --output json \
+            | jq -r '.DistributionList.Items[]? | select(.Aliases.Items != null) | select(.Aliases.Items[]? == "downloads.blueprintr.io") | .Id' \
+            | head -n1)
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            echo "::error::Could not resolve downloads bucket - has the downloads stack been terraform-applied?"
+            exit 1
+          fi
+          if [ -z "$DIST_ID" ]; then
+            echo "::error::Could not resolve CloudFront distribution for downloads.blueprintr.io"
+            exit 1
+          fi
+          echo "bucket=$BUCKET"   >> "$GITHUB_OUTPUT"
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+
+      - id: channel
+        name: Recheck live channel and capture updater CAS state
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          live_json=$(mktemp)
+          live_headers=$(mktemp)
+          curl --fail --silent --show-error --location \
+            --retry 4 --retry-all-errors \
+            --header 'Cache-Control: no-cache' \
+            --header 'Pragma: no-cache' \
+            --dump-header "$live_headers" \
+            https://downloads.blueprintr.io/core/updater.json \
+            -o "$live_json"
+          LIVE_VERSION=$(jq -er '.version' "$live_json")
+          LIVE_ETAG=$(tr -d '\r' < "$live_headers" \
+            | awk 'tolower($1) == "etag:" { print $2 }' \
+            | tail -n1)
+          if [ "$LIVE_VERSION" != "$EXPECTED_LIVE_VERSION" ] \
+            || [ "$LIVE_ETAG" != "$EXPECTED_LIVE_ETAG" ]; then
+            echo "::error::live channel changed during the build: expected $EXPECTED_LIVE_VERSION $EXPECTED_LIVE_ETAG, got $LIVE_VERSION $LIVE_ETAG"
+            exit 1
+          fi
+
+          S3_ETAG=$(aws s3api head-object \
+            --bucket "$BUCKET" \
+            --key core/updater.json \
+            --query ETag \
+            --output text)
+          if [ "$S3_ETAG" != "$LIVE_ETAG" ]; then
+            echo "::error::public updater ETag $LIVE_ETAG does not match S3 $S3_ETAG"
+            exit 1
+          fi
+          echo "updater_etag=$S3_ETAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify existing versioned objects are byte-identical
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          : > _versioned-missing
+          for f in "_out/Vellum-Core_${VERSION}_"*; do
+            [ -e "$f" ] || continue
+            key="core/${VERSION}/$(basename "$f")"
+            head_json=$(mktemp)
+            head_error=$(mktemp)
+            if aws s3api head-object \
+                --bucket "$BUCKET" --key "$key" \
+                --output json > "$head_json" 2> "$head_error"; then
+              expected_etag="\"$(md5sum "$f" | awk '{print $1}')\""
+              expected_sha=$(sha256sum "$f" | awk '{print $1}')
+              expected_size=$(stat -c '%s' "$f")
+              actual_etag=$(jq -er '.ETag' "$head_json")
+              actual_size=$(jq -er '.ContentLength' "$head_json")
+              actual_sha=$(jq -r '.Metadata.sha256 // ""' "$head_json")
+              actual_source=$(jq -r '.Metadata["source-sha"] // ""' "$head_json")
+              actual_version=$(jq -r '.Metadata.version // ""' "$head_json")
+              if [ "$actual_etag" != "$expected_etag" ] \
+                || [ "$actual_sha" != "$expected_sha" ] \
+                || [ "$actual_size" != "$expected_size" ] \
+                || [ "$actual_source" != "$SOURCE_SHA" ] \
+                || [ "$actual_version" != "$VERSION" ]; then
+                echo "::error::$key already exists with different bytes or provenance; versioned objects are append-only"
+                exit 1
+              fi
+              echo "Reusing byte-identical immutable object: $key"
+            elif grep -q '(404)' "$head_error"; then
+              echo "$f" >> _versioned-missing
+            else
+              cat "$head_error" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload versioned artefacts (immutable, long TTL)
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          content_type() {
+            case "$1" in
+              *.dmg)      echo application/x-apple-diskimage ;;
+              *.tar.gz)   echo application/gzip ;;
+              *.sig)      echo text/plain ;;
+              *.exe)      echo application/vnd.microsoft.portable-executable ;;
+              *.AppImage) echo application/octet-stream ;;
+              *.deb)      echo application/vnd.debian.binary-package ;;
+              *.msi)      echo application/x-msi ;;
+              *)          echo application/octet-stream ;;
+            esac
+          }
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            key="core/${VERSION}/$(basename "$f")"
+            digest=$(sha256sum "$f" | awk '{print $1}')
+            echo "→ s3://${BUCKET}/${key}"
+            # The condition closes the check/upload race: even concurrent
+            # jobs cannot replace a versioned object with different bytes.
+            aws s3api put-object \
+              --bucket "$BUCKET" \
+              --key "$key" \
+              --body "$f" \
+              --checksum-algorithm SHA256 \
+              --content-type "$(content_type "$f")" \
+              --cache-control "public,max-age=31536000,immutable" \
+              --metadata "sha256=$digest,source-sha=$SOURCE_SHA,version=$VERSION" \
+              --tagging "release-guard=v2&version=${VERSION}&source-sha=${SOURCE_SHA}" \
+              --if-none-match '*' \
+              >/dev/null
+          done < _versioned-missing
+
+      - name: Upload /core/latest aliases (overwritten each release)
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          content_type() {
+            case "$1" in
+              *.dmg)      echo application/x-apple-diskimage ;;
+              *.tar.gz)   echo application/gzip ;;
+              *.sig)      echo text/plain ;;
+              *.exe)      echo application/vnd.microsoft.portable-executable ;;
+              *.AppImage) echo application/octet-stream ;;
+              *.deb)      echo application/vnd.debian.binary-package ;;
+              *.msi)      echo application/x-msi ;;
+              *)          echo application/octet-stream ;;
+            esac
+          }
+          public_etag() {
+            curl --fail --silent --show-error --location --head \
+              --header 'Cache-Control: no-cache' \
+              --header 'Pragma: no-cache' \
+              "$1" \
+              | tr -d '\r' \
+              | awk 'tolower($1) == "etag:" { print $2 }' \
+              | tail -n1
+          }
+          for f in _out/Vellum-Core_*; do
+            base=$(basename "$f")
+            case "$base" in
+              Vellum-Core_${VERSION}_*) continue ;;  # skip versioned dupes
+            esac
+            key="core/latest/${base}"
+            digest=$(sha256sum "$f" | awk '{print $1}')
+            echo "→ s3://${BUCKET}/${key}"
+            head_json=$(mktemp)
+            head_error=$(mktemp)
+            condition=(--if-none-match '*')
+            if aws s3api head-object \
+                --bucket "$BUCKET" --key "$key" \
+                --output json > "$head_json" 2> "$head_error"; then
+              current_etag=$(jq -er '.ETag' "$head_json")
+              current_public_etag=$(public_etag \
+                "https://downloads.blueprintr.io/${key}")
+              if [ "$current_public_etag" != "$current_etag" ]; then
+                echo "::error::public $key ETag $current_public_etag does not match S3 $current_etag before publish"
+                exit 1
+              fi
+              condition=(--if-match "$current_etag")
+            elif ! grep -q '(404)' "$head_error"; then
+              cat "$head_error" >&2
+              exit 1
+            fi
+            aws s3api put-object \
+              --bucket "$BUCKET" \
+              --key "$key" \
+              --body "$f" \
+              --checksum-algorithm SHA256 \
+              --content-type "$(content_type "$f")" \
+              --cache-control "no-store,max-age=0,must-revalidate" \
+              --metadata "sha256=$digest,source-sha=$SOURCE_SHA,version=$VERSION" \
+              --tagging "release-guard=v2&version=${VERSION}&source-sha=${SOURCE_SHA}" \
+              "${condition[@]}" \
+              >/dev/null
+          done
+
+      - name: Upload updater.json LAST (after binaries are in place)
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+          EXPECTED_ETAG: ${{ steps.channel.outputs.updater_etag }}
+        run: |
+          set -euo pipefail
+          CURRENT_ETAG=$(aws s3api head-object \
+            --bucket "$BUCKET" \
+            --key core/updater.json \
+            --query ETag \
+            --output text)
+          if [ "$CURRENT_ETAG" != "$EXPECTED_ETAG" ]; then
+            echo "::error::core/updater.json changed before commit: expected $EXPECTED_ETAG, got $CURRENT_ETAG"
+            exit 1
+          fi
+          MANIFEST_SHA=$(sha256sum updater.json | awk '{print $1}')
+          aws s3api put-object \
+            --bucket "$BUCKET" \
+            --key core/updater.json \
+            --body updater.json \
+            --checksum-algorithm SHA256 \
+            --content-type application/json \
+            --cache-control "no-store,max-age=0,must-revalidate" \
+            --metadata "sha256=$MANIFEST_SHA,source-sha=$SOURCE_SHA,version=$VERSION" \
+            --tagging "release-guard=v2&version=${VERSION}&source-sha=${SOURCE_SHA}" \
+            --if-match "$EXPECTED_ETAG" \
+            >/dev/null
+
+      - name: Invalidate CloudFront on /core/latest/* and /core/updater*
+        env:
+          DIST_ID: ${{ steps.aws.outputs.dist_id }}
+        run: |
+          set -euo pipefail
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/core/latest/*" "/core/updater*" \
+            --query Invalidation.Id \
+            --output text)
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$DIST_ID" \
+            --id "$INVALIDATION_ID"
+
+      - name: Verify published channel, provenance, and installer bytes
+        env:
+          BUCKET: ${{ steps.aws.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          UPDATER_URL="https://downloads.blueprintr.io/core/updater.json"
+          LOCAL_MANIFEST_SHA=$(sha256sum updater.json | awk '{print $1}')
+
+          verify_mutable_headers() {
+            local headers=$1
+            local label=$2
+            if ! tr -d '\r' < "$headers" \
+                | grep -Eiq '^cache-control:.*no-store'; then
+              echo "::error::$label is missing Cache-Control: no-store"
+              cat "$headers"
+              exit 1
+            fi
+            if tr -d '\r' < "$headers" \
+                | grep -Eiq '^cf-cache-status: *(HIT|STALE|REVALIDATED|UPDATING)'; then
+              echo "::error::Cloudflare served a cached $label despite no-store"
+              cat "$headers"
+              exit 1
+            fi
+          }
+
+          # Verify the committed S3 object and its provenance before testing
+          # either public cache layer.
+          S3_HEAD=$(aws s3api head-object \
+            --bucket "$BUCKET" --key core/updater.json)
+          test "$(jq -r '.Metadata.sha256' <<<"$S3_HEAD")" = "$LOCAL_MANIFEST_SHA"
+          test "$(jq -r '.Metadata["source-sha"]' <<<"$S3_HEAD")" = "$SOURCE_SHA"
+          test "$(jq -r '.Metadata.version' <<<"$S3_HEAD")" = "$VERSION"
+          test "$(jq -r '.CacheControl' <<<"$S3_HEAD")" = 'no-store,max-age=0,must-revalidate'
+          aws s3api get-object \
+            --bucket "$BUCKET" \
+            --key core/updater.json \
+            s3-updater.json >/dev/null
+          test "$(sha256sum s3-updater.json | awk '{print $1}')" = "$LOCAL_MANIFEST_SHA"
+
+          # Poll the canonical URL (without a cache-busting query) so this
+          # verifies the same cache key clients use after invalidation.
+          live_manifest=$(mktemp)
+          live_headers=$(mktemp)
+          manifest_ok=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --location \
+                --header 'Cache-Control: no-cache' \
+                --header 'Pragma: no-cache' \
+                --dump-header "$live_headers" \
+                "$UPDATER_URL" -o "$live_manifest" \
+              && cmp --silent updater.json "$live_manifest"; then
+              manifest_ok=1
+              break
+            fi
+            echo "Waiting for the canonical updater cache (${attempt}/30)..."
+            sleep 10
+          done
+          if [ "$manifest_ok" -ne 1 ]; then
+            echo "::error::$UPDATER_URL does not serve the manifest just published"
+            exit 1
+          fi
+          verify_mutable_headers "$live_headers" updater.json
+
+          # Repeat without request cache directives: this is the exact request
+          # a normal Tauri client makes and must independently see new bytes.
+          client_manifest=$(mktemp)
+          client_headers=$(mktemp)
+          curl --fail --silent --show-error --location \
+            --dump-header "$client_headers" \
+            "$UPDATER_URL" -o "$client_manifest"
+          cmp --silent updater.json "$client_manifest"
+          verify_mutable_headers "$client_headers" updater.json
+
+          jq -e \
+            --arg version "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" '
+              ("https://downloads.blueprintr.io/core/" + $version) as $base |
+              .version == $version and
+              .source_sha == $source_sha and
+              (.platforms | keys | sort) == ([
+                "darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"
+              ] | sort) and
+              (.platforms | to_entries | all(.value.signature | length > 0)) and
+              .platforms["darwin-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_universal.app.tar.gz") and
+              .platforms["darwin-aarch64"].url == ($base + "/Vellum-Core_" + $version + "_universal.app.tar.gz") and
+              .platforms["windows-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_x64-setup.exe") and
+              .platforms["linux-x86_64"].url == ($base + "/Vellum-Core_" + $version + "_amd64.AppImage") and
+              (.downloads | keys | sort) == (["linux", "mac", "win"] | sort) and
+              .downloads.mac.url == ($base + "/Vellum-Core_" + $version + "_universal.dmg") and
+              .downloads.win.url == ($base + "/Vellum-Core_" + $version + "_x64-setup.exe") and
+              .downloads.linux.url == ($base + "/Vellum-Core_" + $version + "_amd64.AppImage") and
+              (.artifacts | length >= 7) and
+              (.artifacts | to_entries | all(
+                (.value.url | startswith($base + "/")) and
+                (.value.sha256 | test("^[0-9a-f]{64}$"))
+              ))
+            ' "$live_manifest" >/dev/null
+
+          # Hash the public versioned installer URLs themselves, not merely
+          # the local staging files used to construct the manifest.
+          declare -A verified_url_sha
+          for platform in mac win linux; do
+            url=$(jq -er --arg platform "$platform" '.downloads[$platform].url' "$live_manifest")
+            expected=$(jq -er --arg platform "$platform" '.downloads[$platform].sha256' "$live_manifest")
+            actual=$(curl --fail --silent --show-error --location \
+              --retry 4 --retry-all-errors "$url" | sha256sum | awk '{print $1}')
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$url has sha256 $actual, expected $expected"
+              exit 1
+            fi
+            verified_url_sha[$url]=$actual
+            echo "Verified $platform installer: $actual"
+          done
+
+          # Verify every required staged byte (updater payloads + detached
+          # signatures as well as human installers), plus optional deb/msi
+          # formats when present. Reuse the three hashes already streamed
+          # above so large installers are not downloaded twice.
+          for f in "_out/Vellum-Core_${VERSION}_"*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            expected_url="https://downloads.blueprintr.io/core/${VERSION}/${name}"
+            expected=$(sha256sum "$f" | awk '{print $1}')
+            url=$(jq -er --arg name "$name" '.artifacts[$name].url' "$live_manifest")
+            manifest_sha=$(jq -er --arg name "$name" '.artifacts[$name].sha256' "$live_manifest")
+            if [ "$url" != "$expected_url" ] || [ "$manifest_sha" != "$expected" ]; then
+              echo "::error::artifact digest map disagrees with staged $name"
+              exit 1
+            fi
+            actual=${verified_url_sha[$url]:-}
+            if [ -z "$actual" ]; then
+              actual=$(curl --fail --silent --show-error --location \
+                --retry 4 --retry-all-errors \
+                "${url}?release_verify=${SOURCE_SHA}" \
+                | sha256sum | awk '{print $1}')
+            fi
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$url has sha256 $actual, expected staged $expected"
+              exit 1
+            fi
+            verified_url_sha[$url]=$actual
+            echo "Verified versioned artifact: $actual  $url"
+          done
+
+          # The platform URLs must resolve to members of the byte-verified
+          # versioned set above.
+          while IFS= read -r url; do
+            if [ -z "${verified_url_sha[$url]:-}" ]; then
+              echo "::error::updater platform URL was not in the verified artifact set: $url"
+              exit 1
+            fi
+          done < <(jq -r '.platforms[].url' "$live_manifest" | sort -u)
+
+          s3_record() {
+            local key=$1
+            aws s3api list-objects-v2 \
+              --bucket "$BUCKET" \
+              --prefix "$key" \
+              --output json \
+              | jq -er --arg key "$key" \
+                  '.Contents[] | select(.Key == $key) | [.ETag, (.Size | tostring)] | @tsv'
+          }
+
+          # Equal ETag + size proves each mutable alias contains its
+          # immutable versioned counterpart. Poll public ETags until cache
+          # invalidation reaches the client-facing distribution.
+          aliases=(
+            universal.dmg
+            x64-setup.exe
+            amd64.AppImage
+          )
+          declare -A expected_etag
+          for suffix in "${aliases[@]}"; do
+            versioned="core/${VERSION}/Vellum-Core_${VERSION}_${suffix}"
+            latest="core/latest/Vellum-Core_${suffix}"
+            versioned_record=$(s3_record "$versioned")
+            latest_record=$(s3_record "$latest")
+            if [ "$versioned_record" != "$latest_record" ]; then
+              echo "::error::$latest does not match $versioned in S3"
+              exit 1
+            fi
+            expected_etag[$suffix]=$(printf '%s' "$latest_record" | cut -f1)
+          done
+
+          aliases_ok=0
+          for attempt in $(seq 1 30); do
+            aliases_ok=1
+            for suffix in "${aliases[@]}"; do
+              url="https://downloads.blueprintr.io/core/latest/Vellum-Core_${suffix}"
+              alias_headers=$(mktemp)
+              # Refresh any legacy cached response, then make an unqualified
+              # canonical client request and inspect that response.
+              curl --fail --silent --show-error --location --head \
+                --header 'Cache-Control: no-cache' \
+                "$url" >/dev/null
+              curl --fail --silent --show-error --location --head \
+                --dump-header "$alias_headers" \
+                --output /dev/null \
+                "$url"
+              actual_etag=$(tr -d '\r' < "$alias_headers" \
+                | awk 'tolower($1) == "etag:" { print $2 }' \
+                | tail -n1)
+              if [ "$actual_etag" != "${expected_etag[$suffix]}" ]; then
+                aliases_ok=0
+                break
+              fi
+              verify_mutable_headers "$alias_headers" "$url"
+            done
+            [ "$aliases_ok" -eq 1 ] && break
+            echo "Waiting for canonical installer alias caches (${attempt}/30)..."
+            sleep 10
+          done
+          if [ "$aliases_ok" -ne 1 ]; then
+            echo "::error::one or more canonical latest aliases still serves stale bytes"
+            exit 1
+          fi
+
+      - name: Publish verified GitHub release
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft | grep -qx true
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Summary
+        run: |
+          {
+            echo "## Vellum Core $VERSION published"
+            echo ""
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo "- macOS: https://downloads.blueprintr.io/core/latest/Vellum-Core_universal.dmg"
+            echo "- Windows: https://downloads.blueprintr.io/core/latest/Vellum-Core_x64-setup.exe"
+            echo "- Linux: https://downloads.blueprintr.io/core/latest/Vellum-Core_amd64.AppImage"
+            echo "- Updater: https://downloads.blueprintr.io/core/updater.json"
+            echo ""
+            echo "Versioned snapshot: \`s3://<downloads>/core/$VERSION/\`"
+          } >> "$GITHUB_STEP_SUMMARY"

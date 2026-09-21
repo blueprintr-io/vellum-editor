@@ -1,0 +1,4 @@
+# Local development launchers are not part of source release archives.
+.claude export-ignore
+.codex export-ignore
+.agents export-ignore

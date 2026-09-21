@@ -1,0 +1,52 @@
+/* Self-hosted fonts via @fontsource. Mirrors the weights previously loaded
+ * from fonts.googleapis.com - see index.html history before this commit.
+ *
+ * Self-hosting (instead of the Google CDN link) buys us:
+ *   - No third-party request per page load (privacy + faster TTI).
+ *   - Tighter Content-Security-Policy: no `font-src https://fonts.gstatic.com`,
+ *     no `style-src https://fonts.googleapis.com` exception.
+ *   - Subresource integrity isn't possible against Google's rotating CSS;
+ *     bundling sidesteps that whole class of supply-chain risk.
+ *
+ * Weights chosen to match the previous Google Fonts URL exactly. If you add
+ * a new picker preset in src/store/types.ts (FONT_PRESETS), add the matching
+ * @fontsource import here. */
+
+/* Outfit - UI body. */
+@import '@fontsource/outfit/400.css';
+@import '@fontsource/outfit/500.css';
+@import '@fontsource/outfit/600.css';
+@import '@fontsource/outfit/700.css';
+
+/* JetBrains Mono - monospace UI + code. */
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/700.css';
+
+/* Caveat - sketchy / handwritten labels. */
+@import '@fontsource/caveat/400.css';
+@import '@fontsource/caveat/500.css';
+@import '@fontsource/caveat/600.css';
+@import '@fontsource/caveat/700.css';
+
+/* Inter - alternate UI sans, picker preset. */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+
+/* IBM Plex Mono. */
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+/* Fira Code. */
+@import '@fontsource/fira-code/400.css';
+@import '@fontsource/fira-code/500.css';
+
+/* Lora - serif picker preset. */
+@import '@fontsource/lora/400.css';
+@import '@fontsource/lora/500.css';
+@import '@fontsource/lora/600.css';
+
+/* Single-weight handwritten faces. */
+@import '@fontsource/patrick-hand/400.css';
+@import '@fontsource/architects-daughter/400.css';

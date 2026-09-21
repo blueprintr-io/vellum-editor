@@ -1,0 +1,193 @@
+name: Auto release Core build inputs
+
+# Every trusted main commit that can change the Core desktop binary must map
+# to a strictly newer release. A deliberate version bump wins; otherwise this
+# workflow increments the patch component from the highest existing release.
+# It tags the triggering feature commit itself; release.yml injects the tag
+# version into its disposable build checkouts so provenance stays exact.
+#
+# GITHUB_TOKEN pushes do not recursively trigger workflows. If a release fails
+# after its tag is created, a manual rerun/workflow_dispatch sees the tag at
+# main HEAD and retries that exact source rather than inventing another version.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/auto-release.yml'
+      - '.github/workflows/release.yml'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'postcss.config.js'
+      - 'public/**'
+      - 'scripts/**'
+      - 'src/**'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/capabilities/**'
+      - 'src-tauri/icons/**'
+      - 'src-tauri/src/**'
+      - 'src-tauri/tauri.conf.json'
+      - 'tailwind.config.ts'
+      - 'tsconfig*.json'
+      - 'vite.config.ts'
+  workflow_dispatch:
+
+concurrency:
+  group: vellum-core-auto-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: resolve version and tag exact source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      release_needed: ${{ steps.plan.outputs.release_needed }}
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Align reruns to current main
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags --force
+          git checkout -B main origin/main
+
+      # Check before creating a release tag. A missing secret must not
+      # leave a provenance tag that looks published but has no binaries.
+      - name: Verify release secrets
+        env:
+          PRIV: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUB: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          ROLE: ${{ secrets.AWS_DOWNLOADS_PUBLISH_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "$PRIV" ]; then echo "::error::TAURI_SIGNING_PRIVATE_KEY is empty or unset"; missing=1; fi
+          if [ -z "$PUB" ]; then echo "::error::TAURI_SIGNING_PUBLIC_KEY is empty or unset"; missing=1; fi
+          if [ -z "$ROLE" ]; then echo "::error::AWS_DOWNLOADS_PUBLISH_ROLE_ARN is empty or unset"; missing=1; fi
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Verify synchronized version surfaces
+        run: npm run check:version
+
+      - id: plan
+        name: Resolve monotonic version and tag
+        env:
+          LIVE_UPDATER: https://downloads.blueprintr.io/core/updater.json
+        run: |
+          set -euo pipefail
+
+          live_json=$(mktemp)
+          curl --fail --silent --show-error --location --retry 4 \
+            --retry-all-errors \
+            --header 'Cache-Control: no-cache' \
+            --header 'Pragma: no-cache' \
+            "$LIVE_UPDATER" -o "$live_json"
+          LIVE_VERSION=$(jq -er '.version' "$live_json")
+          LIVE_SOURCE_SHA=$(jq -r '.source_sha // ""' "$live_json")
+
+          CURRENT=$(node scripts/version-sync.mjs --current)
+          SOURCE_SHA=$(git rev-parse HEAD)
+          mapfile -t HEAD_TAGS < <(
+            git tag --points-at HEAD \
+              | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+              | sort -V || true
+          )
+          if [ "${#HEAD_TAGS[@]}" -gt 1 ]; then
+            echo "::error::main HEAD has multiple release tags: ${HEAD_TAGS[*]}"
+            exit 1
+          fi
+
+          if [ "${#HEAD_TAGS[@]}" -eq 1 ]; then
+            TAG="${HEAD_TAGS[0]}"
+            VERSION="${TAG#v}"
+            if [ "$VERSION" = "$LIVE_VERSION" ]; then
+              if [ -n "$LIVE_SOURCE_SHA" ] && [ "$LIVE_SOURCE_SHA" != "$SOURCE_SHA" ]; then
+                echo "::error::live $VERSION belongs to $LIVE_SOURCE_SHA, not $SOURCE_SHA"
+                exit 1
+              fi
+              {
+                echo "release_needed=false"
+                echo "tag=$TAG"
+                echo "source_sha=$SOURCE_SHA"
+              } >> "$GITHUB_OUTPUT"
+              echo "$TAG at $SOURCE_SHA is already live."
+              exit 0
+            fi
+            node scripts/version-sync.mjs \
+              --candidate "$VERSION" --assert-newer-than "$LIVE_VERSION" >/dev/null
+            {
+              echo "release_needed=true"
+              echo "tag=$TAG"
+              echo "source_sha=$SOURCE_SHA"
+            } >> "$GITHUB_OUTPUT"
+            echo "Retrying unpublished $TAG at $SOURCE_SHA."
+            exit 0
+          fi
+
+          LATEST_TAG=$(
+            git tag --list \
+              | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+              | sort -V \
+              | tail -n1
+          )
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::no prior plain-semver release tag found"
+            exit 1
+          fi
+          TAG_FLOOR="${LATEST_TAG#v}"
+          FLOOR=$(printf '%s\n%s\n' "$TAG_FLOOR" "$LIVE_VERSION" | sort -V | tail -n1)
+          if node scripts/version-sync.mjs \
+              --candidate "$CURRENT" --assert-newer-than "$FLOOR" \
+              >/dev/null 2>&1; then
+            # Preserve an intentional forward version already committed with
+            # the feature source (for example 1.7.0 above a 1.6.0 floor).
+            CANDIDATE="$CURRENT"
+          else
+            # Otherwise release this source at the next patch above every
+            # published/tagged version, without creating a version-only commit.
+            CANDIDATE=$(node scripts/version-sync.mjs --next-after "$FLOOR")
+          fi
+
+          TAG="v$CANDIDATE"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::$TAG already exists but does not point at main HEAD"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Vellum Core $CANDIDATE" "$SOURCE_SHA"
+          git push origin "$TAG"
+
+          {
+
+            echo "release_needed=true"
+
+            echo "tag=$TAG"
+
+            echo "source_sha=$SOURCE_SHA"
+
+          } >> "$GITHUB_OUTPUT"
+          echo "Created $TAG at $SOURCE_SHA."
+
+  release:
+    name: release
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      source_sha: ${{ needs.plan.outputs.source_sha }}
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
