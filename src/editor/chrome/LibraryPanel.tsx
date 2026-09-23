@@ -35,7 +35,7 @@ export function LibraryPanel() {
       // resolves to `--vellum-side-bottom` so the panel lifts when the tabs
       // bar is on. Pane-keyed, not viewport-keyed: a 240px rail costs most of
       // the drawing surface once the right dock has taken its share.
-      className="float absolute z-30 pane-sm:z-[15] flex flex-col overflow-hidden inset-x-0 bottom-0 top-auto h-[60vh] rounded-b-none pane-sm:left-[14px] pane-sm:right-auto pane-sm:top-[70px] pane-sm:bottom-[var(--vellum-side-bottom,70px)] pane-sm:w-[240px] pane-sm:h-auto pane-sm:rounded-b-[10px]"
+      className="float absolute z-30 pane-sm:z-[15] flex flex-col overflow-hidden inset-x-0 bottom-0 top-auto h-[60vh] rounded-b-none pane-sm:left-[14px] pane-sm:right-auto pane-sm:top-[70px] pane-sm:bottom-[var(--vellum-side-bottom,70px)] pane-sm:w-[calc(240px*var(--vellum-text-scale,1))] pane-sm:h-auto pane-sm:rounded-b-[10px]"
     >
       {/* Header - title + collapse button. The collapse target is the same
        *  Brand-side toggle, so users have two equivalent ways to dismiss. */}

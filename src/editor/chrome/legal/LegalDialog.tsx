@@ -72,7 +72,7 @@ export function LegalDialog({ open, onClose, initialTab = 'ip-complaints' }: Pro
     >
       <div
         ref={wrapRef}
-        className="float w-[640px] max-w-[92vw] max-h-[80vh] flex flex-col"
+        className="float w-[calc(640px*var(--vellum-text-scale,1))] max-w-[92vw] max-h-[80vh] flex flex-col"
       >
         {/* Header - title + close */}
         <div className="flex items-center justify-between px-4 py-[10px] border-b border-border">

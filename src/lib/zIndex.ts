@@ -42,9 +42,9 @@ export const Z = {
   /** Universal launcher (Cmd+K), connector icon flyout, container icon
    *  flyout, legal dialog (when it opens from a dropdown). */
   launcher: 60,
-  /** First-run onboarding modal. Sits above everything except FontPicker
-   *  (which uses its own raised value because its trigger is inside
-   *  the inline label editor). */
+  /** Reserved for the first-run welcome dialog. It and Settings are native
+   *  modal <dialog>s now (ui/ModalDialog.tsx), drawn in the browser's top
+   *  layer above every z-index, so neither reads this. */
   onboarding: 100,
   /** Font picker - opens from inside the inline label editor and must be
    *  above the editor's own portal. Highest in the system. */

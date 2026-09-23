@@ -170,7 +170,7 @@ test.describe('floating chrome fits the editor pane', () => {
       await expectTopChromeDisjoint(page);
 
       // The bottom row has the same failure mode: the left dock (layer pills
-      // + attribution) against the right row (undo / tips / zoom).
+      // + attributions chip) against the right row (undo / tips / zoom).
       await expectBottomChromeDisjoint(page, `dock=${dockWidth}`);
     }
   });
@@ -196,6 +196,34 @@ test('no chrome overlaps anywhere from a 320px pane up', async ({ page }) => {
       // with a dock open leaves a pane far below anything the chrome can lay
       // out in. That's an Editor policy question, not a chrome-layout one;
       // this sweep covers the range the chrome is expected to hold.
+      if (paneW < 320) continue;
+      await expectTopChromeDisjoint(page, label);
+      await expectBottomChromeDisjoint(page, label);
+    }
+  }
+});
+
+/** Settings ▸ Text size grows every cluster's text, and the menus and panels
+ *  with it. At the largest size the rows still have to share out without
+ *  overlapping - useChromeFit measures, so this holds only if it measures
+ *  the scaled chrome. */
+test('no chrome overlaps at the largest text size', async ({ page }) => {
+  await page.goto('/');
+  await page.locator(TOOLBAR).waitFor();
+  await page.evaluate(() => {
+    window.__VELLUM_TEST__!.modules['/src/store/editor.ts'].useEditor
+      .getState()
+      .setUiTextScale(1.5);
+  });
+
+  for (const viewport of [375, 768, 1024, 1280, 1440]) {
+    for (const dockWidth of [0, 400]) {
+      await page.setViewportSize({ width: viewport, height: 800 });
+      await setDock(page, dockWidth);
+      await waitForSettledPane(page);
+
+      const paneW = await page.locator(PANE).evaluate((el) => el.clientWidth);
+      const label = `text 150% viewport=${viewport} dock=${dockWidth} pane=${paneW}`;
       if (paneW < 320) continue;
       await expectTopChromeDisjoint(page, label);
       await expectBottomChromeDisjoint(page, label);

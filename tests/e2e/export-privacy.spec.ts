@@ -89,7 +89,7 @@ test('editable-source consent is reset when the export dialog reopens', async ({
   const group = page.getByRole('group', { name: 'Include full editable document' });
   await expect(group).toBeVisible();
   await expect(page.getByRole('note')).toHaveCount(0);
-  await group.getByRole('button').click();
+  await group.getByRole('switch', { name: 'Include full editable document' }).click();
   await expect(page.getByRole('note')).toContainText('including hidden layers');
   await page.keyboard.press('Escape');
   await open();

@@ -454,7 +454,7 @@ export function UniversalLauncher() {
       }}
     >
       <div
-        className="float w-[min(520px,100%)] max-h-[70vh] sm:max-h-[60vh] flex flex-col overflow-hidden"
+        className="float w-[min(calc(520px*var(--vellum-text-scale,1)),100%)] max-h-[70vh] sm:max-h-[60vh] flex flex-col overflow-hidden"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="relative px-[10px] pt-[10px] pb-[8px] border-b border-border">

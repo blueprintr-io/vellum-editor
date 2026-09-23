@@ -205,7 +205,7 @@ export function Brand() {
  *  the paper card so it needs the blue treatment to read against the
  *  warm background. Kept as an inline SVG (rather than an <img>) so the
  *  stroke colour can flip with future theme work without a second asset. */
-function BrandMark() {
+export function BrandMark() {
   const stroke = 'rgb(56, 139, 251)';
   return (
     <svg

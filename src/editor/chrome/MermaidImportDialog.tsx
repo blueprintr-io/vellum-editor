@@ -187,7 +187,7 @@ export function MermaidImportDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       title="Import Mermaid"
       subtitle="Paste Mermaid source - flowchart / graph / stateDiagram. Subgraphs become containers."
-      panelClassName="w-[min(820px,92vw)] max-h-[88vh] flex flex-col p-4"
+      panelClassName="w-[min(calc(820px*var(--vellum-text-scale,1)),92vw)] max-h-[88vh] flex flex-col p-4"
       contentClassName="flex flex-col gap-3 flex-1 min-h-0"
     >
       <textarea

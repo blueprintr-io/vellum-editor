@@ -67,7 +67,7 @@ export function FloatingToolbar() {
     // swipe affordance from the visible overflow edges.
     <div
       style={onNotes ? NOTES_ACCENT : undefined}
-      className="float absolute top-[58px] left-1/2 -translate-x-1/2 max-w-[calc(100%-28px)] z-[15] flex p-[5px] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pane-wide:top-[14px]"
+      className="float absolute top-[var(--vellum-second-row-top,58px)] left-1/2 -translate-x-1/2 max-w-[calc(100%-28px)] z-[15] flex p-[5px] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pane-wide:top-[14px]"
     >
       {/* The button row is its own box so it keeps its natural width in both
        *  layouts - `w-max flex-shrink-0` means measuring it gives the width

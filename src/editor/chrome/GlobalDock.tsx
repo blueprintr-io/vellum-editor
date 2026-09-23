@@ -18,32 +18,7 @@ export function GlobalDock() {
           'calc(var(--vellum-dock-bottom-edge, 6px) + var(--vellum-dock-stack, 0px))',
       }}
     >
-      <div className="flex flex-col items-center gap-[2px]">
-        <LayerPills />
-        {/* Attribution copy is hidden on narrow panes - it's the widest thing
-         *  in the bottom-left dock, and at ~230px it's what runs into the
-         *  bottom-right row once the pane shrinks (phone, or a wide right
-         *  dock). The same links live in the Legal/About surfaces. */}
-        <span className="hidden pane-md:inline text-[9px] text-fg-muted/70 tracking-[0.02em] select-none">
-          <a
-            href="https://github.com/blueprintr-io/vellum-editor"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-fg hover:underline underline-offset-[2px]"
-          >
-            source-available
-          </a>
-          &nbsp;diagraming tool by{' '}
-          <a
-            href="https://blueprintr.io"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-fg hover:underline underline-offset-[2px]"
-          >
-            blueprintr.io
-          </a>
-        </span>
-      </div>
+      <LayerPills />
       <AttributionsButton />
     </div>
   );

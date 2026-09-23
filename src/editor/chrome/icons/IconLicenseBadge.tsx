@@ -236,7 +236,7 @@ function BrandInfoTooltip() {
       {open && (
         <span
           role="tooltip"
-          className="float absolute z-[40] left-1/2 -translate-x-1/2 top-full mt-1 w-[220px] px-2 py-[6px] text-[10px] leading-snug text-fg whitespace-normal pointer-events-none normal-case"
+          className="float absolute z-[40] left-1/2 -translate-x-1/2 top-full mt-1 w-[calc(220px*var(--vellum-text-scale,1))] px-2 py-[6px] text-[10px] leading-snug text-fg whitespace-normal pointer-events-none normal-case"
           style={{ fontFamily: 'var(--font-body)', textAlign: 'left' }}
         >
           {BRAND_TOOLTIP}

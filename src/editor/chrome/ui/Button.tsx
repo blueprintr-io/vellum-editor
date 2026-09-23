@@ -13,13 +13,14 @@ import { forwardRef, type ButtonHTMLAttributes } from 'react';
  *                   buttons inside dialog headers
  *
  *  Sizes:
+ *   - `lg` - a dialog's single call to action (`px-4 py-2 text-[13px]`)
  *   - `md` - the modal-action standard (`px-3 py-[6px] text-[12px]`)
  *   - `sm` - the dropdown-item / inline action standard (`px-2 py-[4px] text-[11px]`)
  *
  *  All variants accept a `className` override that merges (not replaces) - so
  *  callers can layer on widths, gaps, etc. without breaking the base look. */
 type Variant = 'primary' | 'secondary' | 'ghost';
-type Size = 'md' | 'sm';
+type Size = 'lg' | 'md' | 'sm';
 
 const VARIANT_CLASSES: Record<Variant, string> = {
   primary:
@@ -31,6 +32,7 @@ const VARIANT_CLASSES: Record<Variant, string> = {
 };
 
 const SIZE_CLASSES: Record<Size, string> = {
+  lg: 'px-4 py-2 text-[13px] font-medium',
   md: 'px-3 py-[6px] text-[12px]',
   sm: 'px-2 py-[4px] text-[11px]',
 };

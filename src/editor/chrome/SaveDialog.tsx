@@ -38,6 +38,7 @@ import {
 import { DialogShell, DialogActions } from './ui/DialogShell';
 import { Button } from './ui/Button';
 import { RangeField } from './ui/RangeField';
+import { scaledPx } from '../text-scale';
 import { Toggle } from './SettingsDialog';
 import { I } from './icons';
 
@@ -283,7 +284,7 @@ export function SaveDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       title="Save / Export"
       subtitle={filename}
-      panelClassName="w-[min(760px,95vw)] max-h-[94vh] overflow-y-auto p-4"
+      panelClassName="w-[min(calc(760px*var(--vellum-text-scale,1)),95vw)] max-h-[94vh] overflow-y-auto p-4"
       hideCloseButton
     >
       {/* Format picker */}
@@ -512,7 +513,7 @@ export function SaveDialog({ onClose }: { onClose: () => void }) {
                   }
                   defaultTitle="encoder quality - drag to change"
                   activeTitle="encoder quality - drag to change, double-click for default"
-                  labelWidth="44px"
+                  labelWidth={scaledPx(44)}
                 />
               </Field>
             )}
@@ -531,7 +532,7 @@ export function SaveDialog({ onClose }: { onClose: () => void }) {
                   onChange={(v) => setExportPrefs({ padding: v ?? DEFAULT_EXPORT_PREFS.padding })}
                   defaultTitle="margin around the diagram - drag to change"
                   activeTitle="margin around the diagram - drag to change, double-click for default"
-                  labelWidth="48px"
+                  labelWidth={scaledPx(48)}
                 />
               </Field>
             )}
@@ -686,7 +687,7 @@ function ToggleRow({
         {hint && <span className="text-[10px] text-fg-muted leading-tight">{hint}</span>}
       </div>
       <div className="shrink-0 pt-[1px]">
-        <Toggle on={on} onChange={onChange} />
+        <Toggle on={on} onChange={onChange} label={label} />
       </div>
     </div>
   );

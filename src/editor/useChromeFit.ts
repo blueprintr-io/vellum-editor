@@ -79,6 +79,12 @@ export const BRAND_FULL_PX = 190;
  *  on and the `--vellum-dock-bottom-tight` the right row sits on. */
 const BOTTOM_STACK_PX = 52;
 
+/** Where anything below the top row starts - the toolbar once it drops to
+ *  its own row, the find panel: under the 42px brand pill with a 2px gap.
+ *  Published as `--vellum-second-row-top`, pushed further down when the top
+ *  row is taller than that (Settings ▸ Text size grows the brand pill). */
+const SECOND_ROW_TOP_PX = 58;
+
 /** The toolbar card's own frame around the measured button row: `p-[5px]`
  *  either side plus the 1px `.float` border. */
 const TOOLBAR_FRAME_PX = 12;
@@ -202,12 +208,26 @@ export function useChromeFit(
       setVar(pane, '--vellum-brand-budget', budget);
       setFlag(pane, 'data-brand-full', fitsFullBrand(paneW, budget));
 
+      // Second row: below the taller of the two top-row clusters. Read after
+      // the brand flag above, which decides whether the pill has its subline
+      // and so how tall it is. Neither cluster's height depends on this.
+      const brand = pane.querySelector<HTMLElement>('.brand-pill');
+      const topRowBottom = Math.max(
+        brand ? brand.offsetTop + brand.offsetHeight : 0,
+        actions ? actions.offsetTop + actions.offsetHeight : 0,
+      );
+      setVar(
+        pane,
+        '--vellum-second-row-top',
+        Math.max(SECOND_ROW_TOP_PX, topRowBottom + 2),
+      );
+
       // The bottom row has the same problem with a much simpler answer: the
       // left dock (layer pills + attributions) and the right row (undo, tips,
       // zoom) are both fixed-content clusters on fixed offsets, so either they
       // fit side by side or the left one lifts onto its own row. Compared
       // directly rather than at a guessed breakpoint - the left dock's width
-      // varies with the attribution line, the right row's start varies with
+      // varies with the attributions chip, the right row's start varies with
       // the tips button. Neither depends on the lift, so this can't oscillate.
       const bottomLeft = pane.querySelector<HTMLElement>('[data-chrome="global-dock"]');
       const bottomRight = pane.querySelector<HTMLElement>('[data-chrome="undo-dock"]');
@@ -226,13 +246,15 @@ export function useChromeFit(
     // Watching the clusters as well as the pane catches content-driven width
     // changes at a fixed pane width - a plugin mounting a toolbar button, a
     // rebound tool slot, an attributions chip appearing once an icon pack
-    // loads, a webfont swapping in under a labelled button.
+    // loads, a webfont swapping in under a labelled button, a new text size.
     const ro = new ResizeObserver(measure);
     ro.observe(pane);
     for (const chrome of ['toolbar-row', 'actions', 'global-dock', 'undo-dock']) {
       const el = pane.querySelector(`[data-chrome="${chrome}"]`);
       if (el) ro.observe(el);
     }
+    const brand = pane.querySelector('.brand-pill');
+    if (brand) ro.observe(brand);
     return () => {
       ro.disconnect();
       measureRef.current = () => {};

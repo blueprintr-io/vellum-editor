@@ -59,7 +59,7 @@ export function AttributionsButton() {
       </button>
       {open && (
         <div
-          className="float absolute left-0 bottom-full mb-2 w-[320px] max-h-[60vh] overflow-y-auto z-30 px-[14px] py-3"
+          className="float absolute left-0 bottom-full mb-2 w-[calc(320px*var(--vellum-text-scale,1))] max-w-[calc(100vw-28px)] max-h-[60vh] overflow-y-auto z-30 px-[14px] py-3"
         >
           <div className="flex items-baseline justify-between mb-2">
             <span className="text-[11px] font-mono text-fg-muted tracking-[0.04em]">

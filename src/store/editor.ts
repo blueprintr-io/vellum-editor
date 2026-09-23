@@ -79,6 +79,11 @@ import {
   type ExportFormat,
   type ExportPrefs,
 } from '@/editor/export/options';
+import {
+  DEFAULT_TEXT_SCALE,
+  sanitizeTextScale,
+  type TextScale,
+} from '@/editor/text-scale';
 // renderPipeline is exposed through the file menu rather than booted by default.
 void renderPipeline;
 
@@ -389,6 +394,14 @@ export const TABS_BAR_DEFAULT_PX = 22;
 export const TABS_BAR_MIN_PX = 16;
 export const TABS_BAR_MAX_PX = 240;
 
+/** The tabs bar's on-screen height. `tabsBarHeight` is stored at 100% text
+ *  size; Settings ▸ Text size grows the bar by the same factor as its
+ *  labels. Anything positioned against the bar should use this (or the
+ *  `--vellum-tabs-h` variable the editor root sets), not the raw value. */
+export function renderedTabsBarHeight(height: number, textScale: number): number {
+  return Math.round(height * textScale);
+}
+
 /** Default + bounds for the resizable right dock - the full-height panel
  *  column that CONTRACTS the editor rather than floating over it (see the
  *  `rightDock` plugin slot). Min keeps a panel's controls usable; max caps
@@ -500,6 +513,11 @@ export type EditorState = {
    *  the LayerPills re-points the draw target at it. */
   activeLayer: Layer;
   theme: Theme;
+  /** Settings ▸ Text size: multiplier for every font size in the editor's
+   *  own interface (menus, panels, dialogs). Diagram text is unaffected.
+   *  Always one of TEXT_SCALE_OPTIONS - the setter and the persist merge
+   *  snap anything else to the nearest step. Persisted. */
+  uiTextScale: TextScale;
 
   // overlays
   morePopoverOpen: boolean;
@@ -557,6 +575,7 @@ export type EditorState = {
   toggleActiveLayer: () => void;
   setTheme: (t: Theme) => void;
   toggleTheme: () => void;
+  setUiTextScale: (scale: number) => void;
   toggleMorePopover: () => void;
   setMorePopoverOpen: (open: boolean) => void;
   toggleCmdk: () => void;
@@ -875,7 +894,7 @@ export type EditorState = {
   setExportPrefs: (p: Partial<ExportPrefs>) => void;
 
   // contextual tip-toast (TipToast.tsx). `tipsEnabled` is the user-facing
-  // master switch (Settings ▸ Tips); persisted so the choice survives
+  // master switch (Settings ▸ Editing ▸ Tips); persisted so the choice survives
   // reloads. `activeTipKey` is the *currently-displayed* tip - session-only,
   // pushed by gesture handlers (Canvas.tsx) and cleared on idle.
   tipsEnabled: boolean;
@@ -900,7 +919,7 @@ export type EditorState = {
   smartAnchorCountGlobal: number;
   setSmartAnchorCountGlobal: (n: number) => void;
 
-  /** Snapping, split in two (Settings ▸ Snap ▸ Shape / Grid Snapping):
+  /** Snapping, split in two (Settings ▸ Editing ▸ Snapping):
    *   - shape snapping: drags and resizes align to nearby shapes' edges,
    *     centres, sizes and spacing, and connector ends attach anywhere along
    *     a shape's outline - off, they're left where dropped;
@@ -926,10 +945,11 @@ export type EditorState = {
   setSnapEnabled: (v: boolean) => void;
   toggleSnapEnabled: () => void;
 
-  /** First-run preset picker (OnboardingDialog). Defaults to `false`; the
-   *  modal mounts whenever this is false and `readOnly` is off, and clicking
-   *  "Get started" flips it true. Embed/readOnly contexts mark it true
-   *  silently in an effect so the host page never sees the modal. */
+  /** First-run welcome (OnboardingDialog). Defaults to `false`; the modal
+   *  mounts whenever this is false and `readOnly` is off, and finishing it -
+   *  "Get started", Enter or Escape - flips it true. Embed/readOnly contexts
+   *  mark it true silently in an effect so the host page never sees the
+   *  modal. Hosts watch the false → true flip to record completion. */
   hasCompletedOnboarding: boolean;
   setHasCompletedOnboarding: (v: boolean) => void;
 
@@ -1021,6 +1041,7 @@ type PersistedSlice = Pick<
   EditorState,
   | 'hotkeyBindings'
   | 'theme'
+  | 'uiTextScale'
   | 'personalLibrary'
   | 'canvasPaper'
   | 'showDots'
@@ -2156,6 +2177,7 @@ export const useEditor = create<EditorState>()(
         layerMode: 'both',
         activeLayer: 'blueprint',
         theme: 'dark',
+        uiTextScale: DEFAULT_TEXT_SCALE,
 
         canvasPaper: undefined,
         showDots: true,
@@ -2172,7 +2194,7 @@ export const useEditor = create<EditorState>()(
         activeTipKey: null,
 
         // Default OFF - opt-in feature. When the user turns it on globally
-        // (Settings ▸ Smart anchors globally), every shape without an
+        // (Settings ▸ Editing ▸ Smart anchors on every shape), every shape without an
         // explicit per-shape value exposes the 8-point grid.
         smartAnchorsGlobal: false,
         // Workspace default count - matches SMART_ANCHOR_DEFAULT_COUNT (8,
@@ -2186,8 +2208,7 @@ export const useEditor = create<EditorState>()(
         gridSnapEnabled: true,
         snapEnabled: true,
 
-        // First-run onboarding modal - false until the user picks a preset
-        // (Grid & Snap or Whiteboard) and clicks Get started.
+        // First-run welcome dialog - false until the user finishes it.
         hasCompletedOnboarding: false,
 
         penColor: 'var(--ink)',
@@ -2283,6 +2304,7 @@ export const useEditor = create<EditorState>()(
         setTheme: (t) => set({ theme: t }),
         toggleTheme: () =>
           set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+        setUiTextScale: (scale) => set({ uiTextScale: sanitizeTextScale(scale) }),
         toggleMorePopover: () =>
           set((s) => ({ morePopoverOpen: !s.morePopoverOpen, cmdkOpen: false })),
         setMorePopoverOpen: (open) => set({ morePopoverOpen: open }),
@@ -4746,6 +4768,7 @@ export const useEditor = create<EditorState>()(
         return ({
         hotkeyBindings: s.hotkeyBindings,
         theme: s.theme,
+        uiTextScale: s.uiTextScale,
         personalLibrary: s.personalLibrary,
         canvasPaper: s.canvasPaper,
         showDots: s.showDots,
@@ -4833,6 +4856,8 @@ export const useEditor = create<EditorState>()(
             shapeSnapEnabled,
             gridSnapEnabled,
             snapEnabled: shapeSnapEnabled || gridSnapEnabled,
+            // Feeds a CSS multiplier, so only an offered step gets through.
+            uiTextScale: sanitizeTextScale(p.uiTextScale ?? current.uiTextScale),
             hotkeyBindings: DEFAULT_BINDINGS,
             // Re-validate + backfill: a persisted prefs object from an
             // older build may lack newer keys or carry an out-of-range

@@ -39,7 +39,7 @@ export function MoreShapesPopover() {
   return (
     <div
       ref={wrapRef}
-      className="hidden pane-sm:flex float absolute top-[70px] z-[16] w-[360px] max-h-[460px] flex-col overflow-hidden"
+      className="hidden pane-sm:flex float absolute top-[70px] z-[16] w-[calc(360px*var(--vellum-text-scale,1))] max-w-[calc(100%-28px)] max-h-[460px] flex-col overflow-hidden"
       style={{
         left: '50%',
         // Aligns roughly under the more-shapes button (right end of the toolbar).

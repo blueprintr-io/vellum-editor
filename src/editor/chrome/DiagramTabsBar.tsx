@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  renderedTabsBarHeight,
   TABS_BAR_MAX_PX,
   TABS_BAR_MIN_PX,
   useEditor,
@@ -36,10 +37,11 @@ import { I } from './icons';
  *  is the most-compact reading; user can drag up to 240px. Tab height,
  *  text size, and icon sizes scale with the bar's live height so a tall
  *  bar reads as full-fidelity tabs and a short bar reads as a slim strip
- *  without unused vertical whitespace.
+ *  without unused vertical whitespace. Settings ▸ Text size then scales
+ *  the whole bar, height included (renderedTabsBarHeight).
  *
  *  Tool lock is on the FloatingToolbar (left of the cursor); magnet-snap
- *  is on the Defaults inspector header + Settings ▸ Behaviour. */
+ *  is on the Defaults inspector header + Settings ▸ Editing. */
 const RESIZE_HANDLE_PX = 4;
 const TAB_VPAD = 2; // top + bottom breathing room inside the content row
 
@@ -66,6 +68,8 @@ export function DiagramTabsBar() {
 
   const tabsBarHeight = useEditor((s) => s.tabsBarHeight);
   const setTabsBarHeight = useEditor((s) => s.setTabsBarHeight);
+  const uiTextScale = useEditor((s) => s.uiTextScale);
+  const barHeight = renderedTabsBarHeight(tabsBarHeight, uiTextScale);
 
   // Derived sizing. Content area = bar height minus the resize handle.
   // Tab body fills it minus a small breathing margin. Font + icon sizes
@@ -78,8 +82,17 @@ export function DiagramTabsBar() {
     const fontPx = clamp(10, Math.round(tabH * 0.55), 18);
     const iconBtn = clamp(12, Math.round(tabH * 0.85), 36);
     const iconGlyph = clamp(10, Math.round(tabH * 0.55), 24);
-    return { contentH, tabH, fontPx, iconBtn, iconGlyph };
-  }, [tabsBarHeight]);
+    // Worked out at 100% text size, then grown with Settings ▸ Text size,
+    // as the bar itself is.
+    const k = uiTextScale;
+    return {
+      contentH: Math.round(contentH * k),
+      tabH: Math.round(tabH * k),
+      fontPx: Math.round(fontPx * k),
+      iconBtn: Math.round(iconBtn * k),
+      iconGlyph: Math.round(iconGlyph * k),
+    };
+  }, [tabsBarHeight, uiTextScale]);
 
   const onlyTab = tabs.length <= 1;
 
@@ -146,10 +159,12 @@ export function DiagramTabsBar() {
       if (!ref) return;
       // Bar is anchored to the bottom of the viewport, so dragging UP
       // (negative deltaY) GROWS the bar. Subtract delta to invert.
+      // The stored height is at 100% text size; the bar on screen is
+      // `uiTextScale` times taller, so a screen-pixel drag divides back.
       const delta = ref.pointerY - e.clientY;
-      setTabsBarHeight(ref.startHeight + delta);
+      setTabsBarHeight(ref.startHeight + delta / uiTextScale);
     },
-    [setTabsBarHeight],
+    [setTabsBarHeight, uiTextScale],
   );
   const onResizePointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -238,7 +253,7 @@ export function DiagramTabsBar() {
   return (
     <div
       className="absolute bottom-0 left-0 right-0 z-[12] border-t border-border bg-bg/[0.30] backdrop-blur-chrome flex flex-col"
-      style={{ height: `${tabsBarHeight}px` }}
+      style={{ height: `${barHeight}px` }}
       data-vellum-tabs-bar
     >
       <div
@@ -246,7 +261,7 @@ export function DiagramTabsBar() {
         onPointerMove={onResizePointerMove}
         onPointerUp={onResizePointerUp}
         onPointerCancel={onResizePointerUp}
-        title={`Drag to resize (${TABS_BAR_MIN_PX}–${TABS_BAR_MAX_PX}px)`}
+        title={`Drag to resize (${renderedTabsBarHeight(TABS_BAR_MIN_PX, uiTextScale)}–${renderedTabsBarHeight(TABS_BAR_MAX_PX, uiTextScale)}px)`}
         className="flex-shrink-0 cursor-ns-resize hover:bg-accent/[0.14]"
         style={{ height: `${RESIZE_HANDLE_PX}px` }}
       />

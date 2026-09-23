@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FONT_PRESETS } from '@/store/types';
+import { scaledPx } from '@/editor/text-scale';
 
 /** Custom font dropdown - renders each option in its own font so the user can
  *  see the typeface before picking. Native <select> can't style options
@@ -98,7 +99,7 @@ export function FontPicker({
                     onChange(p.label === 'Default' ? undefined : p.value);
                     setOpen(false);
                   }}
-                  style={{ fontFamily: p.value, fontSize: 13 }}
+                  style={{ fontFamily: p.value, fontSize: scaledPx(13) }}
                   className={`flex items-center justify-between w-full px-3 py-[7px] text-left ${
                     isActive ? 'bg-bg-emphasis text-fg' : 'text-fg hover:bg-bg-emphasis'
                   }`}

@@ -322,7 +322,7 @@ export function ContextMenu({
       <div
         ref={wrapRef}
         className={`float fixed z-[40] py-1 max-h-[calc(100vh-8px)] overflow-y-auto ${
-          state.target.kind === 'canvas' ? 'w-[230px]' : 'w-[200px]'
+          state.target.kind === 'canvas' ? 'w-[calc(230px*var(--vellum-text-scale,1))]' : 'w-[calc(200px*var(--vellum-text-scale,1))]'
         }`}
         style={{
           left: pos.x,

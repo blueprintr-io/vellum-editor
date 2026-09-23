@@ -59,7 +59,7 @@ export function AdvancedSection({ shape }: { shape: Shape }) {
  *  record with the control column still wide enough for a paired
  *  number + unit. Geometry rows use it too, so the block on top and the
  *  table below share one left edge. */
-const ROW = 'grid grid-cols-[88px_1fr] items-center gap-[6px] mb-[6px]';
+const ROW = 'grid grid-cols-[calc(88px*var(--vellum-text-scale,1))_1fr] items-center gap-[6px] mb-[6px]';
 const KEY = 'font-mono text-[9px] text-fg-muted truncate';
 
 /** `.pos` / `.size` / `.rotation`, two numbers to a row.

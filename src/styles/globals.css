@@ -18,7 +18,10 @@
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-body);
-    font-size: 14px;
+    /* The page's base size stays put under Settings ▸ Text size, so an
+     * embedding host's own text never grows with the editor's. The editor
+     * root restates it at the scaled size (Editor.tsx). */
+    font-size: 14px; /* text-scale: fixed */
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
     /* Default to no native text selection: Vellum is a canvas app, not a
@@ -129,10 +132,11 @@
    * control column, which is exactly seven 22px swatch cells on a 3px gap -
  * the swatch grid, the sliders, the segmented controls and the selects all
    * end on the same right edge. 72px is also what fits the widest value chip
-   * (`orange-300 ×`, see .reset-chip) under its key without truncating. */
+   * (`orange-300 ×`, see .reset-chip) under its key without truncating.
+   * The label column grows with Settings ▸ Text size, as does the panel. */
   .field {
     display: grid;
-    grid-template-columns: 72px 1fr;
+    grid-template-columns: calc(72px * var(--vellum-text-scale, 1)) 1fr;
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
@@ -479,6 +483,54 @@
     .vellum-dwell-pop,
     .vellum-dwell-pop-dot {
       animation: none;
+    }
+  }
+
+  /* Settings switch (Toggle in SettingsDialog.tsx). Forced-colours mode
+   * (Windows contrast themes) drops fills and shadows, which would leave an
+   * empty outline with no visible state. Redraw it in system colours: an
+   * outlined track that fills with Highlight when on. */
+  @media (forced-colors: active) {
+    .vellum-switch {
+      forced-color-adjust: none;
+      background: ButtonFace;
+      border: 1px solid ButtonText;
+    }
+    .vellum-switch[aria-checked='true'] {
+      background: Highlight;
+      border-color: Highlight;
+    }
+    .vellum-switch-knob {
+      background: ButtonText !important;
+      box-shadow: none;
+    }
+    .vellum-switch[aria-checked='true'] .vellum-switch-knob {
+      background: HighlightText !important;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vellum-switch,
+    .vellum-switch-knob {
+      transition: none !important;
+    }
+  }
+
+  /* Segmented control (ui/SegmentedControl.tsx) and paper swatches: in
+   * forced-colours mode the chosen segment's raised fill disappears, so it
+   * takes the system highlight instead. Swatches keep their real colours -
+   * the colour IS the choice - and the chosen one keeps a visible ring. */
+  @media (forced-colors: active) {
+    .vellum-segmented input:checked + span {
+      forced-color-adjust: none;
+      background: Highlight;
+      color: HighlightText;
+    }
+    .vellum-swatches input + span {
+      forced-color-adjust: none;
+    }
+    .vellum-swatches input:checked + span {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
     }
   }
 

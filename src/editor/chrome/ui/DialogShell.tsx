@@ -30,8 +30,8 @@ export interface DialogShellProps {
   /** Subtitle / supporting copy under the title. Optional. */
   subtitle?: ReactNode;
   /** Width clause for the panel. Defaults to `min(360px, 92vw)` matching
-   *  the Save dialog. Pass anything Tailwind accepts, e.g.
-   *  `"w-[min(720px,92vw)] max-h-[80vh]"`. */
+   *  the Save dialog, with the 360 grown by Settings ▸ Text size. Pass
+   *  anything Tailwind accepts, e.g. `"w-[min(720px,92vw)] max-h-[80vh]"`. */
   panelClassName?: string;
   /** Inner content classes - useful when the panel needs `overflow-hidden`,
    *  flex layout, etc. */
@@ -56,7 +56,7 @@ export function DialogShell({
   onClose,
   title,
   subtitle,
-  panelClassName = 'w-[min(360px,92vw)] p-4',
+  panelClassName = 'w-[min(calc(360px*var(--vellum-text-scale,1)),92vw)] p-4',
   contentClassName,
   elevated = false,
   hideCloseButton,

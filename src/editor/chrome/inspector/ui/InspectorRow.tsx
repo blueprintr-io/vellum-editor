@@ -36,7 +36,7 @@ import { useEditor } from '@/store/editor';
  *    the thing being covered.
  *  - At `sm` and up, a 280px column pinned to the right edge, `z-[14]` so
  *    the bottom-right pill row (undo, tips, zoom - all `z-[15]`) wins any
- *    overlap.
+ *    overlap. It widens with Settings ▸ Text size so labels keep their room.
  *
  *  Which is why the column has to end ABOVE that row rather than run under
  *  it: `max-h` is the pane height less the 70px top offset and less
@@ -47,7 +47,7 @@ import { useEditor } from '@/store/editor';
 export const INSPECTOR_PANEL_CLASS =
   'float absolute z-[25] sm:z-[14] overflow-y-auto ' +
   'inset-x-0 bottom-0 top-auto h-[60vh] max-h-none rounded-b-none ' +
-  'sm:left-auto sm:right-[14px] sm:top-[70px] sm:bottom-auto sm:w-[280px] ' +
+  'sm:left-auto sm:right-[14px] sm:top-[70px] sm:bottom-auto sm:w-[calc(280px*var(--vellum-text-scale,1))] ' +
   'sm:h-auto sm:max-h-[calc(100vh-70px-var(--vellum-side-bottom,70px))] ' +
   'sm:rounded-b-[10px]';
 

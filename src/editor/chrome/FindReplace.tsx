@@ -173,7 +173,7 @@ export function FindReplace() {
     // over it. In the narrow layout it also has to clear the toolbar's second
     // row (top 58 + 44 high), which is where it used to land on top of it.
     <div
-      className="absolute top-[112px] pane-wide:top-[58px] right-[14px] z-[40] float p-3 w-[320px] max-w-[calc(100%-28px)]"
+      className="absolute top-[calc(var(--vellum-second-row-top,58px)+54px)] pane-wide:top-[var(--vellum-second-row-top,58px)] right-[14px] z-[40] float p-3 w-[calc(320px*var(--vellum-text-scale,1))] max-w-[calc(100%-28px)]"
       onKeyDown={onKeyDown}
     >
       <div className="flex items-center gap-2 mb-2">

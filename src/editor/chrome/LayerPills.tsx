@@ -49,7 +49,7 @@ function Pill({
     // segments; there are no standing dividers between inactive ones.
     <button
       onClick={onClick}
-      className={`px-[14px] py-[7px] text-[12px] font-medium flex items-center gap-[7px] border-y-0 border-x ${
+      className={`px-[11px] py-[3px] text-[10px] font-medium flex items-center gap-[6px] border-y-0 border-x ${
         active
           ? 'bg-bg-emphasis text-fg border-x-border'
           : 'bg-transparent text-fg-muted hover:text-fg border-x-transparent'

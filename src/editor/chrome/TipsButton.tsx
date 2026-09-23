@@ -216,7 +216,7 @@ export function TipsButton() {
         <I.helpCircle />
       </button>
       {open && (
-        <div className="float absolute bottom-[44px] right-0 z-[40] w-[340px] max-h-[60vh] overflow-y-auto p-3">
+        <div className="float absolute bottom-[44px] right-0 z-[40] w-[calc(340px*var(--vellum-text-scale,1))] max-w-[calc(100vw-28px)] max-h-[60vh] overflow-y-auto p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[12px] font-semibold text-fg">
               Tips & shortcuts

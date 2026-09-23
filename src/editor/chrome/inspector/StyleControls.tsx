@@ -9,6 +9,7 @@ import {
   SHADE_RUNGS,
 } from '@/editor/swatches';
 import { RangeField } from '@/editor/chrome/ui/RangeField';
+import { scaledPx } from '@/editor/text-scale';
 import { Field, ResetChip } from './ui/InspectorRow';
 import type { PrismPalette } from '@/store/types';
 import {
@@ -1020,7 +1021,8 @@ export function FontSizeField({
       <div
         style={{
           position: 'relative',
-          width: 50,
+          // Grows with Settings ▸ Text size, as the number inside does.
+          width: scaledPx(50),
           border: '1px solid var(--border)',
           borderRadius: 4,
           background: 'var(--bg-subtle)',
@@ -1067,7 +1069,7 @@ export function FontSizeField({
             border: 'none',
             outline: 'none',
             color: 'var(--fg)',
-            fontSize: 11,
+            fontSize: scaledPx(11),
             fontFamily: 'var(--font-mono)',
             textAlign: 'left',
           }}
@@ -1114,7 +1116,7 @@ export function FontSizeField({
             top: '100%',
             left: 27, // line up under the number cell, right of the −
             marginTop: 4,
-            width: 56,
+            width: scaledPx(56),
             maxHeight: 240,
             overflowY: 'auto',
             padding: '4px 0',
@@ -1142,7 +1144,7 @@ export function FontSizeField({
                 background: p === display ? 'var(--bg-emphasis)' : 'transparent',
                 border: 'none',
                 color: 'var(--fg)',
-                fontSize: 12,
+                fontSize: scaledPx(12),
                 fontFamily: 'var(--font-body)',
                 textAlign: 'center',
                 cursor: 'pointer',

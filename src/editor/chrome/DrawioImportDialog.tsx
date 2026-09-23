@@ -64,7 +64,7 @@ export function DrawioImportDialog({
       onClose={() => onClose(null)}
       title="Import draw.io"
       subtitle={`This file has ${pages.length} tabs. What would you like to import?`}
-      panelClassName="w-[min(480px,92vw)] p-4"
+      panelClassName="w-[min(calc(480px*var(--vellum-text-scale,1)),92vw)] p-4"
       contentClassName="flex flex-col gap-3"
     >
       <div className="flex flex-col gap-2">

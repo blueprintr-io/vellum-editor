@@ -124,7 +124,7 @@ function CopyPngButton() {
         <I.copy />
       </ChromeButton>
       {open && (
-        <div className="float absolute top-[40px] right-0 z-30 w-[220px] py-1">
+        <div className="float absolute top-[40px] right-0 z-30 w-[calc(220px*var(--vellum-text-scale,1))] py-1">
           {/* Uses the persisted export prefs (scale / padding / background),
            *  so this stays in step with whatever the user last chose in the
            *  export dialog. */}
@@ -249,7 +249,7 @@ function MenuButton() {
         <I.menu />
       </ChromeButton>
       {open && (
-        <div className="float absolute top-[40px] right-0 z-30 w-[200px] py-1">
+        <div className="float absolute top-[40px] right-0 z-30 w-[calc(200px*var(--vellum-text-scale,1))] py-1">
           {item('New', isMac() ? '⌥⌘N' : 'Alt+Ctrl+N', handleNew)}
           {item('Open…', `${meta}O`, handleOpen)}
           {item('Import draw.io…', null, onImportDrawio)}

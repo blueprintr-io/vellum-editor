@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useEditor } from '@/store/editor';
+import { scaledPx } from '@/editor/text-scale';
 
 /** Shared range/slider control that backs the four inspector sliders
  *  (StrokeWidth, MarkerSize, Opacity, CornerRadius). Each of those
@@ -51,7 +52,8 @@ export interface RangeFieldProps {
   activeTitle?: string;
   /** Tooltip text on the right-hand readout. */
   labelTitle?: (isDefault: boolean) => string;
-  /** Width of the right-hand readout column. Defaults to 44px. */
+  /** Width of the right-hand readout column. Defaults to 44px, grown with
+   *  Settings ▸ Text size so the number still fits. */
   labelWidth?: string;
   /** Turn typed text back into a value in the slider's own domain. The
    *  default reads the leading number (`"12px"` → 12, `"1.5"` → 1.5);
@@ -80,7 +82,7 @@ export function RangeField({
   defaultTitle = 'default - drag to override, double-click to reset',
   activeTitle = 'drag to change, double-click to reset to default',
   labelTitle,
-  labelWidth = '44px',
+  labelWidth = scaledPx(44),
   parse = defaultParse,
   step,
 }: RangeFieldProps) {

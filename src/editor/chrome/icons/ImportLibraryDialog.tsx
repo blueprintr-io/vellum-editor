@@ -299,7 +299,7 @@ export function ImportLibraryDialog({ onClose }: Props) {
       aria-modal="true"
       aria-label="Import library"
     >
-      <div ref={wrapRef} className="float w-[480px] max-w-[92vw] p-4">
+      <div ref={wrapRef} className="float w-[calc(480px*var(--vellum-text-scale,1))] max-w-[92vw] p-4">
         <div className="flex items-baseline justify-between mb-1">
           <span className="text-[14px] font-semibold text-fg">Import library</span>
           <span className="text-[10px] font-mono text-fg-muted tracking-[0.04em] uppercase">

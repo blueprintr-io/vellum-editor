@@ -1,14 +1,16 @@
 // Editor shell with canvas, controls and shared dialogs.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { getRecoveryError, RECOVERY_STATUS_EVENT } from '@/store/recovery-storage';
 import { handleSaveAs } from './files';
 import {
   useEditor,
+  renderedTabsBarHeight,
   RIGHT_DOCK_MIN_PX,
   RIGHT_DOCK_MAX_PX,
 } from '@/store/editor';
 import { isMacDesktop } from '@/lib/runtime';
+import { TEXT_SCALE_VAR } from './text-scale';
 import { Canvas } from './canvas/Canvas';
 import { Brand } from './chrome/Brand';
 import { FloatingToolbar } from './chrome/FloatingToolbar';
@@ -104,6 +106,19 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
     document.documentElement.classList.toggle('theme-light', theme === 'light');
   }, [theme]);
 
+  // Settings ▸ Text size. Every chrome font size multiplies by this variable
+  // (see src/styles/postcss-text-scale.js); it sits on <html> so menus
+  // portaled to <body> scale too. Layout effect, so a saved size is in place
+  // before the first paint instead of the chrome visibly growing after it.
+  const uiTextScale = useEditor((s) => s.uiTextScale);
+  useLayoutEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty(TEXT_SCALE_VAR, String(uiTextScale));
+    return () => {
+      root.removeProperty(TEXT_SCALE_VAR);
+    };
+  }, [uiTextScale]);
+
   // Lift the bottom-pinned docks (Zoom, Undo, GlobalDock, Tips,
   // ReturnToContent, TipToast) when a plugin contributes the diagram-tabs
   // strip. Each dock reads one of the `--vellum-dock-bottom-*` vars
@@ -125,8 +140,11 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
   // original positions until the user expands again.
   const tabsBarCollapsed = useEditor((s) => s.tabsBarCollapsed);
   const tabsExpanded = hasDiagramTabs && !tabsBarCollapsed;
-  const TABS_H = tabsExpanded ? tabsBarHeight : 0;
+  const TABS_H = tabsExpanded ? renderedTabsBarHeight(tabsBarHeight, uiTextScale) : 0;
   const TABS_GAP = 3;
+  // The GlobalDock (layer pills + attributions chip) grows with Settings ▸
+  // Text size, so the clearances measured against it grow too.
+  const DOCK_CLEAR = Math.round(60 * uiTextScale);
   const rootStyle = (tabsExpanded
     ? {
         // dock-tight: Zoom, Undo, Tips, TipToast (was bottom-[14px]).
@@ -134,17 +152,17 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
         // dock-edge: GlobalDock (was bottom-[6px], sits flush at edge).
         '--vellum-dock-bottom-edge': `${TABS_H + 2}px`,
         // dock-cta: ReturnToContent (was bottom-[60px], well above docks).
-        '--vellum-dock-bottom-cta': `${60 + TABS_H + TABS_GAP}px`,
+        '--vellum-dock-bottom-cta': `${DOCK_CLEAR + TABS_H + TABS_GAP}px`,
         // Side panels - clear of both the tabs bar and the GlobalDock
-        // (layer pills + attribution stack is ~50px tall).
-        '--vellum-side-bottom': `${TABS_H + 60}px`,
+        // (layer pills + attributions chip, ~30px tall), with room to spare.
+        '--vellum-side-bottom': `${TABS_H + DOCK_CLEAR}px`,
         '--vellum-tabs-h': `${TABS_H}px`,
       }
     : {
         '--vellum-dock-bottom-tight': '14px',
         '--vellum-dock-bottom-edge': '6px',
-        '--vellum-dock-bottom-cta': '60px',
-        '--vellum-side-bottom': '70px',
+        '--vellum-dock-bottom-cta': `${DOCK_CLEAR}px`,
+        '--vellum-side-bottom': `${DOCK_CLEAR + 10}px`,
         '--vellum-tabs-h': '0px',
       }) as React.CSSProperties;
 
@@ -179,8 +197,10 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
 
   return (
     <PluginProvider plugins={plugins}>
+      {/* text-[14px] restates the page's base size so text that inherits it
+       *  follows Settings ▸ Text size; <body> itself stays fixed for hosts. */}
       <div
-        className="relative w-screen h-screen overflow-hidden bg-bg"
+        className="relative w-screen h-screen overflow-hidden bg-bg text-[14px]"
         style={rootStyle}
       >
         {/* Everything the right dock CONTRACTS is in here. Insetting one
