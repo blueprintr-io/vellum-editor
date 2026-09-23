@@ -109,8 +109,7 @@ transitive crates remain visible in cargo-audit output.
 Release preflight runs
 `node scripts/check-license-notices.mjs dist/DEPENDENCY-LICENSES.json` after the
 public build. It blocks publication if any dependency lacks verified notice
-text. As of 2026-09-21 this gate fails for `react-remove-scroll-bar@2.3.8`: its
-npm archive omits the license text and its recorded source commit cannot be
-retrieved. Obtain a verifiable notice for that version or update to a dependency
-version with traceable notices before publishing. Ordinary builds and tests
-remain available while this review is pending.
+text. A dependency whose package omits its notice needs a record in
+`legal/dependency-notices/`, whose README lists each record and its evidence.
+The Checks workflow does not run this gate, so a new dependency without a
+notice first fails in release preflight.

@@ -39,6 +39,10 @@
     "file": "_radix-ui_rect-1.1.1.txt",
     "url": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE"
   },
+  "react-remove-scroll-bar@2.3.8": {
+    "file": "react-remove-scroll-bar-2.3.8.txt",
+    "url": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/7301c160fda44cb8cf2b9fdfde61efad35736196/LICENSE"
+  },
   "crates.io:alloc-stdlib@0.2.2": [
     {
       "file": "rust_alloc-stdlib-0.2.2-LICENSE.txt",
