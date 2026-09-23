@@ -239,7 +239,9 @@ async function main() {
         open: typeof window.showOpenFilePicker === 'function' && String(window.showOpenFilePicker).indexOf('plugin:dialog|open') >= 0,
         save: typeof window.showSaveFilePicker === 'function' && String(window.showSaveFilePicker).indexOf('plugin:dialog|save') >= 0
       },
-      downloadHook: String(HTMLAnchorElement.prototype.click).indexOf('plugin:dialog|save') >= 0,
+      downloadHook: String(HTMLAnchorElement.prototype.click).indexOf('__vellumSaveBlob') >= 0 &&
+        typeof window.__vellumSaveBlob === 'function' &&
+        String(window.__vellumSaveBlob).indexOf('plugin:dialog|save') >= 0,
       inner: { w: window.innerWidth, h: window.innerHeight }
     };`);
   log(`report ${JSON.stringify(report)}`);

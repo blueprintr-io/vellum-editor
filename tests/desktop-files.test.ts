@@ -80,6 +80,19 @@ test('DESKTOP_FILES_JS parses and is registered as a plugin init script', () => 
   assert.match(LIB_RS, /js_init_script\(DESKTOP_FILES_JS\.to_string\(\)\)/);
 });
 
+test('the release smoke probe recognises the bridge this script installs', () => {
+  // The probe only reads function source, so a refactor of the bridge can
+  // leave it looking for code that moved. Run it here, before any build.
+  const smoke = readFileSync(path.resolve('scripts/e2e/webdriver-smoke.mjs'), 'utf8');
+  const m = smoke.match(/const report = await exec\(`([\s\S]*?)`\);/);
+  assert.ok(m, 'webdriver-smoke.mjs no longer defines its report probe as exec(`...`)');
+  const { w } = harness();
+  const report = w.eval(`(function () {${m[1]}})()`);
+  assert.equal(report.tauri, true);
+  assert.deepEqual(plain(report.pickers), { open: true, save: true });
+  assert.equal(report.downloadHook, true);
+});
+
 test('every IPC command the script invokes is granted by the capability', () => {
   const granted = new Set(
     CAPABILITY.permissions.map((p) => (typeof p === 'string' ? p : p.identifier)),
