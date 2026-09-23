@@ -144,7 +144,7 @@ for (const zoom of [1, 0.65])
       const card = await page.locator('[data-rack-drag-card]').boundingBox();
       const pointer = await point(page, 'b-u6');
       expect(card.x + card.width).toBeLessThan(pointer.x);
-      await page.screenshot({path:'/private/tmp/vellum-rack-swap-preview.png'});
+      await page.screenshot({path:test.info().outputPath('vellum-rack-swap-preview.png')});
     }
     await page.mouse.up();
     const moved = await state(page);
@@ -258,7 +258,7 @@ for(const [target,zoom] of [['a-u4',1],['b-u6',0.65]] as const)
     await beginDrag(page,'loose',target);
     await expect(page.locator(`[data-rack-drop-target="${target}"]`)).toHaveCount(1);
     await expect(page.locator('[data-rack-drag-preview]')).toContainText(`Assign to U${unitBefore.rackUnit!.u}`);
-    if(zoom===1) await page.screenshot({path:'/private/tmp/vellum-rack-icon-preview.png'});
+    if(zoom===1) await page.screenshot({path:test.info().outputPath('vellum-rack-icon-preview.png')});
     expect((await state(page)).diagram.shapes.some(s=>s.id==='loose')).toBe(true);
     await page.mouse.up();
     await expect(page.locator('[data-rack-drag-preview]')).toHaveCount(0);

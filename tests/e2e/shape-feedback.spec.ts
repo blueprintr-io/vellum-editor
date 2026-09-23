@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Locator } from './fixtures';
+import { test, expect, requireVendorIconPacks, type Page, type Locator } from './fixtures';
 
 async function seed(page: Page, library = false) {
   await page.goto('/');
@@ -40,6 +40,7 @@ async function drag(page: Page, handle: Locator, x: number, y: number) {
 test('Home, Shapes and Icons share category navigation, real recent previews and personal access', async ({
   page,
 }) => {
+  requireVendorIconPacks();
   await seed(page, true);
   await expect(
     page.getByRole('tablist', { name: 'Library' }).getByRole('tab'),

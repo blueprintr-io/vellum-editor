@@ -1,8 +1,9 @@
-import { test, expect, type Page } from './fixtures';
+import { test, expect, requireVendorIconPacks, type Page } from './fixtures';
 
 test('rack U icon picker and vendor icon drop replace only the addressed U, preserving attribution', async ({
   page,
 }) => {
+  requireVendorIconPacks();
   await seed(page);
   await page.getByLabel('Select rack unit').selectOption('rack-u6');
   await page

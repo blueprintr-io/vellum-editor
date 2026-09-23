@@ -145,5 +145,5 @@ test('conversation links render two lines and the expanded palette matches canva
   await expect(
     page.locator('[data-notation="bpmn-ad-hoc-subprocess"]'),
   ).toHaveCount(1);
-  await page.screenshot({ path: '/private/tmp/vellum-expanded-shapes.png' });
+  await page.screenshot({ path: test.info().outputPath('vellum-expanded-shapes.png') });
 });

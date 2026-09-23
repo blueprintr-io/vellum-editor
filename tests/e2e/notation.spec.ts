@@ -399,7 +399,7 @@ test('all native symbols render together without errors', async ({ page }) => {
     page.locator('[data-vellum-canvas] [data-notation]'),
   ).toHaveCount(104);
   await page.screenshot({
-    path: '/private/tmp/vellum-native-catalog.png',
+    path: test.info().outputPath('vellum-native-catalog.png'),
     fullPage: true,
   });
   expect(errors).toEqual([]);

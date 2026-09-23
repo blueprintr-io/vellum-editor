@@ -52,7 +52,7 @@ for(const [kind,rotation] of [['polygon',0],['polygon',35],['notation',20],['ico
     horizontal.dots.forEach((dot,i)=>samePoint(dot,{x:2*before.center.x-before.dots[i].x,y:before.dots[i].y}));
     samePoint(horizontal.wire,horizontal.dots.find(p=>p.fx===0&&p.fy===0.5)!);
     expect(horizontal.diagram.connectors).toEqual(before.diagram.connectors);
-    if(kind==='polygon'&&rotation===35)await page.screenshot({path:'/private/tmp/vellum-mirrored-anchors.png'});
+    if(kind==='polygon'&&rotation===35)await page.screenshot({path:test.info().outputPath('vellum-mirrored-anchors.png')});
     await page.keyboard.press('Shift+v');
     const both=await snapshot(page);
     both.dots.forEach((dot,i)=>samePoint(dot,{x:horizontal.dots[i].x,y:2*horizontal.center.y-horizontal.dots[i].y}));
