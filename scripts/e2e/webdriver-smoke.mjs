@@ -146,14 +146,29 @@ async function startAttachMode() {
   driver = spawn(drv, [`--port=${args.port}`], { stdio: ['ignore', 'pipe', 'pipe'], env: APP_ENV });
   pipe(driver, 'msedgedriver');
   await waitForHttp('msedgedriver', `${base}/status`, 30_000);
-  const value = await wd('POST', '/session', {
-    capabilities: {
-      alwaysMatch: {
-        browserName: 'webview2',
-        'ms:edgeOptions': { debuggerAddress: `localhost:${args.attachPort}` },
-      },
-    },
-  });
+  // Attach to the IPv4 address polled above. `localhost` can resolve to ::1
+  // first on Windows, where the DevTools server is not listening, and Edge
+  // WebDriver then reports "chrome not reachable". Retries cover a server
+  // that answers /json/version before it accepts a debugger.
+  const debuggerAddress = `127.0.0.1:${args.attachPort}`;
+  let value;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      value = await wd('POST', '/session', {
+        capabilities: {
+          alwaysMatch: {
+            browserName: 'webview2',
+            'ms:edgeOptions': { debuggerAddress },
+          },
+        },
+      });
+      break;
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      log(`attach attempt ${attempt} failed (${e.message}); retrying`);
+      await sleep(2000);
+    }
+  }
   sessionId = value.sessionId;
 }
 
