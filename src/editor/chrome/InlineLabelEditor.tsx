@@ -821,9 +821,11 @@ export function InlineLabelEditor() {
           // that's the user opening the font picker, clicking a colour
           // swatch, or focusing the size input to type a new value. The
           // toolbar root carries the ref; anything contained by it is
-          // "still editing" from the user's perspective.
+          // "still editing" from the user's perspective. The text-colour
+          // picker is portalled out of the toolbar but belongs to it.
           const next = e.relatedTarget as Node | null;
           if (next && toolbarRef.current?.contains(next)) return;
+          if (next instanceof Element && next.closest('[data-colour-picker]')) return;
           commit();
         }}
         onPaste={(e) => {
@@ -1274,6 +1276,7 @@ export function FloatingTextToolbar({
           >
             <SwatchRow
               kind="stroke"
+              pickerTitle="Text colour"
               value={currentTextColor}
               onChange={(c) => {
                 onTextColor(c);

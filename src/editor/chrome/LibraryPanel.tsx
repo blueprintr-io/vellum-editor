@@ -1,6 +1,13 @@
-import { useLibraryNavigation } from './library-navigation';
+import { useLibraryNavigation, type LibraryTab } from './library-navigation';
 import { useEditor } from '@/store/editor';
 import { LibraryBrowser } from './LibraryBrowser';
+
+/** Home leads with recent shapes, and there are none until the library has
+ *  been used. Until then the panel starts on Shapes, so a first launch opens
+ *  on something to draw with. */
+function startingTab(): LibraryTab {
+  return useEditor.getState().recentShapes.length > 0 ? 'Home' : 'Shapes';
+}
 
 /** Persistent left-rail library card. Surfaces the same catalog as
  *  MoreShapesPopover but as a tall, dwellable panel, while the popover
@@ -16,14 +23,18 @@ import { LibraryBrowser } from './LibraryBrowser';
  *  - Every tile also inserts on a plain click (at the viewport centre) -
  * the tiles own that binding, see LibraryShapeTile / IconResultCard. */
 export function LibraryPanel() {
-  const navigation = useLibraryNavigation();
+  const navigation = useLibraryNavigation(startingTab);
   const open = useEditor((s) => s.libraryPanelOpen);
   const setOpen = useEditor((s) => s.setLibraryPanelOpen);
+  // A read-only canvas cannot take new shapes, so the panel is hidden while
+  // a host keeps the canvas read-only. The open state is kept, and the panel
+  // comes back when the canvas is editable again.
+  const readOnly = useEditor((s) => s.readOnly);
   // TRADEMARK-COMPLIANCE - footer-link handlers.
   const openLegalDialog = useEditor((s) => s.openLegalDialog);
   const setImportDialogOpen = useEditor((s) => s.setImportDialogOpen);
 
-  if (!open) return null;
+  if (!open || readOnly) return null;
 
   return (
     <div

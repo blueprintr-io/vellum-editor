@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useEditor } from '@/store/editor';
 import {
   FILL_SWATCHES,
@@ -10,6 +10,8 @@ import {
 } from '@/editor/swatches';
 import { RangeField } from '@/editor/chrome/ui/RangeField';
 import { scaledPx } from '@/editor/text-scale';
+import { CUSTOM_PALETTE_MAX, normaliseHex } from '@/editor/custom-palette';
+import { ColourPicker } from './ColourPicker';
 import { Field, ResetChip } from './ui/InspectorRow';
 import type { PrismPalette } from '@/store/types';
 import {
@@ -29,20 +31,19 @@ import {
  */
 
 // Stroke + fill share column positions so the user can pick e.g. red stroke
-// over red fill from the same column. Every named-colour cell uses the
-// swatch palette's `cssVar` form so it autoswitches on theme toggle (see
-// editor/swatches.ts) - the only literal-hex values left here are the
-// theme-aware var() pairs (--ink, --paper, --mono).
+// over red fill from the same column. Every preset cell uses the swatch
+// palette's `cssVar` form so it autoswitches on theme toggle (see
+// editor/swatches.ts).
 //
-// `--mono` is the OPPOSITE-of-ink swatch (black in dark mode, white in light
-// mode - see tokens.css). Pairing it with `--ink` guarantees the row offers
-// exactly one black + one white in both themes, regardless of which way the
-// canvas is flipped.
-/** Each preset can advertise a `shadeKey` - when set, right-clicking the
- *  cell (or clicking its chevron) opens the 5-rung shade picker for that
- *  named colour. `mono` has no shade ladder (it's a pure single-token
- *  contrast swatch); paper, ink, and every named colour participate. */
-type Preset = { label: string; value: string; shadeKey?: string };
+// The slot after the named colours holds the user's custom palette (see
+// CustomPaletteCell). It used to hold `mono`, the opposite-of-ink swatch.
+// The paper and ink shade ladders already run from white to (near) black in
+// both themes, so the row no longer offers it; shapes that stored
+// `var(--mono)` still render, and the value chip still names them.
+/** Every preset names its `shadeKey`: right-clicking the cell (or clicking
+ *  its chevron) opens the 5-rung shade picker for that colour. Paper and
+ *  ink have grey ladders; the named colours have their own. */
+type Preset = { label: string; value: string; shadeKey: string };
 
 // `paper` and `ink` both expose grey-scale shade ladders (the "shades of
 // grey" picker) - paper's ladder sits at the canvas-surface end of the
@@ -57,28 +58,14 @@ const STROKE_PRESETS: Preset[] = [
     value: s.cssVar,
     shadeKey: s.id,
   })),
-  { label: 'mono', value: 'var(--mono)' },
 ];
 
-// Why fill carries BOTH `paper` and `ink` (stroke/text only need `ink`):
-//
-// `mono` is the opposite-of-ink contrast swatch - black in dark mode, white
-// in light mode. On its own it covers exactly ONE extreme of the canvas.
-// Stroke + text pair it with `ink` (which flips: near-white in dark,
-// near-black in light), so those rows always have access to both pure-black
-// AND pure-white regardless of theme.
-//
-// Fill used to pair `mono` with `paper`. But `paper` doesn't flip the same
-// way: in dark mode it's the dark canvas slate, in light mode it's near-white
-// - so the dark-mode fill row offered slate + black (no white), and the
-// light-mode fill row offered near-white + white (no black). The user
-// couldn't paint a white fill on a dark canvas, or a black fill on a light
-// canvas, without dropping into the custom colour picker.
-//
-// Keeping `paper` is still useful - it's the "blend with the canvas"
-// semantic, distinct from `transparent` because paper paints over whatever
-// is underneath. Adding `ink` alongside it gives fill the same pure-black
-// + pure-white guarantee that stroke/text already have.
+// Fill carries both `paper` and `ink`. `paper` is the "blend with the
+// canvas" semantic - distinct from `transparent` because paper paints over
+// whatever is underneath - but it only covers one end of the greyscale: the
+// dark slate in dark mode, near-white in light mode. `ink` flips the other
+// way, so between the two cells and their shade ladders a fill reaches
+// white and black in either theme without the colour picker.
 const FILL_PRESETS: Preset[] = [
   { label: 'paper', value: 'var(--paper)', shadeKey: 'paper' },
   { label: 'ink', value: 'var(--ink)', shadeKey: 'ink' },
@@ -87,8 +74,11 @@ const FILL_PRESETS: Preset[] = [
     value: s.cssVar,
     shadeKey: s.id,
   })),
-  { label: 'mono', value: 'var(--mono)' },
 ];
+
+/** The value `mono` stored before the custom palette took its slot. Only
+ *  the value chip still knows it, so old shapes keep their name. */
+const LEGACY_MONO = 'var(--mono)';
 
 /** Reverse-lookup: stored `var(--{fill|stroke}-{colour}-{rung})` → its base
  *  swatch id, so the SwatchRow can highlight the right base cell when the
@@ -110,19 +100,19 @@ type SwatchKind = 'stroke' | 'fill';
 
 /** Cell metrics. 22px cells on a 3px gap put exactly seven across the
  *  inspector's 172px control column (7 × 22 + 6 × 3 = 172 - see the .field
- *  grid in globals.css), so the 14-cell row (12 presets + none + custom)
- *  lands as a clean 7 × 2 block whose right edge lines up with the sliders
- *  below it. The old 20px cells fit seven as well, but the row was 15 cells
- *  (it carried the "A" auto cell), which wrapped 7 + 7 + 1 and left the
- *  custom cell orphaned on a third line. */
+ *  grid in globals.css), so the 14-cell row (11 presets + custom palette +
+ *  none + more colours) lands as a clean 7 × 2 block whose right edge lines
+ *  up with the sliders below it. The old 20px cells fit seven as well, but
+ *  the row was 15 cells (it carried the "A" auto cell), which wrapped
+ *  7 + 7 + 1 and left the last cell orphaned on a third line. */
 const CELL_PX = 22;
 const CHIP_PX = 16;
 const CELL_GAP_PX = 3;
 const CELL_TRACK = `repeat(auto-fill, ${CELL_PX}px)`;
 
 /** Human-readable name for a stored swatch value - what the ResetChip under
- *  the field label prints. `auto` / `none` / a preset label (`ink`, `blue`,
- *  `mono`) / a ladder rung (`blue-200`) / a short custom literal (`#ff6b3d`),
+ *  the field label prints. `auto` / `none` / a preset label (`ink`, `blue`)
+ *  / a ladder rung (`blue-200`) / a short custom literal (`#ff6b3d`),
  *  falling back to `custom` for anything longer than a hex. `title` carries
  *  the long form for the tooltip, including the vivid-ladder distinction the
  *  chip text is too narrow to spell out. */
@@ -141,6 +131,9 @@ export function swatchValueLabel(
   const preset = presets.find((p) => p.value === normalised);
   if (preset) {
     return { text: preset.label, title: `${preset.label} - click to reset to auto` };
+  }
+  if (normalised === LEGACY_MONO) {
+    return { text: 'mono', title: 'mono - click to reset to auto' };
   }
   const m = normalised.match(/^var\(--(fill|stroke)-([a-z]+)-(\d{3})\)$/);
   if (m) {
@@ -191,16 +184,30 @@ export function SwatchField({
         onChange={onChange}
         allowNone={allowNone}
         showAutoCell={false}
+        pickerDock="panel"
+        pickerTitle={colourTitle(label)}
       />
     </Field>
   );
 }
 
-/** How long the custom colour input may go quiet before its history batch
- *  seals. A drag inside the OS picker streams `input` events a few ms
- *  apart; a pause this long means the user stopped, and if they resume
- *  the next stretch simply becomes its own undo step. */
+/** The colour picker's heading for a field label: `.fill` → "Fill colour",
+ *  "Text color" → "Text color". */
+function colourTitle(label: string): string {
+  const name = label.replace(/^\./, '');
+  const cap = name.charAt(0).toUpperCase() + name.slice(1);
+  return /colou?r/i.test(name) ? cap : `${cap} colour`;
+}
+
+/** How long live colour changes may go quiet before their history batch
+ *  seals. A drag in the colour picker streams a change per frame; a pause
+ *  this long means the user stopped, and if they resume the next stretch
+ *  simply becomes its own undo step. */
 const COLOR_BATCH_QUIET_MS = 400;
+
+/** SwatchRow's open-popover key for the custom palette. Shade pickers key
+ *  by colour id, which is always a bare lower-case name. */
+const PALETTE_PICKER = 'custom-palette';
 
 export function SwatchRow({
   kind,
@@ -208,6 +215,8 @@ export function SwatchRow({
   onChange,
   allowNone = true,
   showAutoCell = true,
+  pickerDock = 'anchor',
+  pickerTitle = 'Colour',
 }: {
   kind: SwatchKind;
   value: string | undefined;
@@ -218,6 +227,11 @@ export function SwatchRow({
    *  alone (popovers); off inside `SwatchField`, where the ResetChip under
    *  the label owns the auto state and the row is a clean 7 × 2 block. */
   showAutoCell?: boolean;
+  /** Where the colour picker opens: beside the inspector panel holding the
+   *  row, or under the row itself (a row inside a popover). */
+  pickerDock?: 'panel' | 'anchor';
+  /** The colour picker's heading: "Fill colour". */
+  pickerTitle?: string;
 }) {
   const presets = kind === 'stroke' ? STROKE_PRESETS : FILL_PRESETS;
   const isNone = value === 'transparent' || value === 'none';
@@ -234,10 +248,20 @@ export function SwatchRow({
   const matchedPreset = presets.find(
     (p) => p.value === normalisedValue || p.shadeKey === shadeBase,
   );
+  // A literal hex that is not a preset is either one of the user's saved
+  // palette colours (the palette cell lights up) or a one-off pick (the
+  // "more colours" cell does).
+  const customPalette = useEditor((s) => s.customPalette);
+  const setCustomPalette = useEditor((s) => s.setCustomPalette);
+  const hexValue = normaliseHex(value);
+  const unmatchedHex = !isDefault && !isNone && !matchedPreset ? hexValue : null;
+  const paletteHex =
+    unmatchedHex && customPalette.includes(unmatchedHex) ? unmatchedHex : null;
   const customValue =
-    !isDefault && !isNone && !matchedPreset ? value : undefined;
-  // Which swatch's shade picker is open. Set by left-click on the chevron
-  // OR by right-click on the cell - both gestures route here.
+    !isDefault && !isNone && !matchedPreset && !paletteHex ? value : undefined;
+  // Which popover is open: a swatch's shade picker (its shadeKey), set by
+  // left-click on the chevron OR right-click on the cell, or the custom
+  // palette (PALETTE_PICKER). One state, so opening one closes the other.
   const [shadePickerFor, setShadePickerFor] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   // Outside-click closes the shade picker. Pointer-down catches the start
@@ -255,14 +279,12 @@ export function SwatchRow({
     return () => document.removeEventListener('pointerdown', onDown);
   }, [shadePickerFor]);
 
-  // Hidden native color input. React's onChange is the `input` event, so it
-  // fires on every frame of a drag inside the OS picker - the preview is
-  // live, but each frame reached the store as its own atomic edit and one
+  // The colour picker streams a change per frame while the user drags in
+  // it, and each frame reached the store as its own atomic edit - one
   // colour pick left dozens of undo entries. Bracket the burst in a history
-  // batch: opened on the first frame, sealed by the native `change` (picker
-  // closed), by a quiet pause, or on unmount - whichever comes first - so
-  // the pick is ONE undo step whatever a given browser does with `change`.
-  const colorRef = useRef<HTMLInputElement>(null);
+  // batch: opened on the first live change, sealed when the gesture ends,
+  // after a quiet pause, when the picker closes or on unmount - whichever
+  // comes first - so a drag is ONE undo step.
   const beginHistoryBatch = useEditor((s) => s.beginHistoryBatch);
   const endHistoryBatch = useEditor((s) => s.endHistoryBatch);
   const colorBatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -277,14 +299,22 @@ export function SwatchRow({
     else clearTimeout(colorBatchTimer.current);
     colorBatchTimer.current = setTimeout(sealColorBatch, COLOR_BATCH_QUIET_MS);
   };
-  useEffect(() => {
-    const el = colorRef.current;
-    el?.addEventListener('change', sealColorBatch);
-    return () => {
-      el?.removeEventListener('change', sealColorBatch);
-      sealColorBatch();
-    };
-  }, [sealColorBatch]);
+  useEffect(() => sealColorBatch, [sealColorBatch]);
+
+  // The colour picker: `apply` colours the value as the user picks, `add`
+  // makes a new custom palette colour. `pickerStart` is the value it
+  // opened on, for its revert swatch. Picking a cell in the row closes it.
+  const [picker, setPicker] = useState<'apply' | 'add' | null>(null);
+  const pickerStart = useRef(value);
+  const openPicker = (mode: 'apply' | 'add' | null) => {
+    sealColorBatch();
+    pickerStart.current = value;
+    setPicker(mode);
+  };
+  const pick = (v: string | undefined) => {
+    if (picker) openPicker(null);
+    onChange(v);
+  };
 
   return (
     // Grid (not flex-wrap) so every cell occupies a deterministic column
@@ -296,11 +326,16 @@ export function SwatchRow({
     // sits at the same x as row N+1 column M - within a row pair AND
     // across the .stroke / .fill rows of the same surface. The
     // `auto-fill` keeps the responsive wrap-on-narrow-panel behaviour the
-    // old flex layout had.
+    // old flex layout had. Positioned so the popovers - the shade pickers
+    // and the custom palette - are placed against the whole grid.
     <div
       ref={wrapperRef}
       className="grid items-center"
-      style={{ gridTemplateColumns: CELL_TRACK, gap: CELL_GAP_PX }}
+      style={{
+        gridTemplateColumns: CELL_TRACK,
+        gap: CELL_GAP_PX,
+        position: 'relative',
+      }}
     >
       {/* Auto/default cell - `A` for "auto". The "A" uses text-fg (not
        *  text-fg-muted) so it stays legible regardless of what colour the
@@ -310,7 +345,7 @@ export function SwatchRow({
         <SwatchCell
           title="default (auto)"
           active={isDefault}
-          onClick={() => onChange(undefined)}
+          onClick={() => pick(undefined)}
         >
           <span className="font-mono text-[10px] text-fg leading-none">A</span>
         </SwatchCell>
@@ -325,28 +360,47 @@ export function SwatchRow({
             (normalisedValue === p.value || shadeBase === p.shadeKey)
           }
           activeRungValue={
-            normalisedValue && p.shadeKey && shadeBase === p.shadeKey
-              ? normalisedValue
-              : null
+            normalisedValue && shadeBase === p.shadeKey ? normalisedValue : null
           }
           shadePickerOpen={shadePickerFor === p.shadeKey}
-          onOpenShadePicker={(open) =>
-            setShadePickerFor(open && p.shadeKey ? p.shadeKey : null)
-          }
+          onOpenShadePicker={(open) => {
+            if (open && picker) openPicker(null);
+            setShadePickerFor(open ? p.shadeKey : null);
+          }}
           onPickBase={() =>
-            onChange(normalisedValue === p.value ? undefined : p.value)
+            pick(normalisedValue === p.value ? undefined : p.value)
           }
           onPickShade={(rungVar) => {
-            onChange(rungVar);
+            pick(rungVar);
             setShadePickerFor(null);
           }}
         />
       ))}
+      <CustomPaletteCell
+        palette={customPalette}
+        activeColour={paletteHex}
+        unsavedColour={paletteHex ? null : unmatchedHex}
+        open={shadePickerFor === PALETTE_PICKER}
+        onOpen={(open) => {
+          if (picker) openPicker(null);
+          setShadePickerFor(open ? PALETTE_PICKER : null);
+        }}
+        onPick={(c) => {
+          pick(c);
+          setShadePickerFor(null);
+        }}
+        onSave={(c) => setCustomPalette([...customPalette, c])}
+        onRemove={(c) =>
+          setCustomPalette(customPalette.filter((x) => x !== c))
+        }
+        adding={picker === 'add'}
+        onAdd={() => openPicker(picker === 'add' ? null : 'add')}
+      />
       {allowNone && (
         <SwatchCell
           title="none"
           active={isNone}
-          onClick={() => onChange(isNone ? undefined : 'transparent')}
+          onClick={() => pick(isNone ? undefined : 'transparent')}
         >
           {/* Diagonal slash through a transparent square - universal "none" idiom. */}
           <svg width={CHIP_PX} height={CHIP_PX} viewBox="0 0 14 14">
@@ -371,10 +425,17 @@ export function SwatchRow({
           </svg>
         </SwatchCell>
       )}
+      {/* Any colour, from the colour picker. Titled "more colours" so it
+       *  reads apart from the custom palette cell, which keeps colours. */}
       <SwatchCell
-        title={customValue ? `custom (${customValue})` : 'custom…'}
-        active={!!customValue}
-        onClick={() => colorRef.current?.click()}
+        title={customValue ? `more colours (${customValue})` : 'more colours…'}
+        active={!!customValue || picker === 'apply'}
+        aria-haspopup="dialog"
+        aria-expanded={picker === 'apply'}
+        onClick={() => {
+          setShadePickerFor(null);
+          openPicker(picker === 'apply' ? null : 'apply');
+        }}
       >
         <span
           className="block rounded-[3px]"
@@ -387,22 +448,42 @@ export function SwatchRow({
           }}
         />
       </SwatchCell>
-      <input
-        ref={colorRef}
-        type="color"
-        // Native colour input requires a #rrggbb-shaped value; if the user
-        // currently has a non-hex value (e.g. transparent) we seed with black.
-        value={customValue && /^#[0-9a-f]{6}$/i.test(customValue) ? customValue : '#000000'}
-        onChange={(e) => {
-          touchColorBatch();
-          onChange(e.target.value);
-        }}
-        className="sr-only"
-        // Keep tab order intact - the visible cell is the focusable target.
-        tabIndex={-1}
-      />
+      {picker && (
+        <ColourPicker
+          key={picker}
+          anchorRef={wrapperRef}
+          dock={pickerDock}
+          title={picker === 'add' ? 'New palette colour' : pickerTitle}
+          intent={picker}
+          value={value}
+          palette={customPalette}
+          onColour={(hex, live) => {
+            if (live) touchColorBatch();
+            else sealColorBatch();
+            onChange(hex);
+          }}
+          onGestureEnd={sealColorBatch}
+          onRevert={() => {
+            sealColorBatch();
+            onChange(pickerStart.current);
+          }}
+          onSave={(hex) => setCustomPalette([...customPalette, hex])}
+          onClose={() => openPicker(null)}
+        />
+      )}
     </div>
   );
+}
+
+/** The 22px frame every swatch-grid cell draws, accent-ringed when active. */
+function cellFrame(active: boolean): React.CSSProperties {
+  return {
+    width: CELL_PX,
+    height: CELL_PX,
+    borderColor: active ? 'var(--accent)' : 'var(--border)',
+    background: active ? 'var(--bg-emphasis)' : 'var(--bg-subtle)',
+    boxShadow: active ? '0 0 0 1px var(--accent) inset' : undefined,
+  };
 }
 
 function SwatchCell({
@@ -411,30 +492,61 @@ function SwatchCell({
   onClick,
   onContextMenu,
   children,
+  ...button
 }: {
   title: string;
   active: boolean;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   children: React.ReactNode;
-}) {
+} & Omit<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  'title' | 'onClick' | 'onContextMenu' | 'children' | 'className' | 'style'
+>) {
   return (
     <button
+      type="button"
+      {...button}
       title={title}
       onClick={onClick}
       onContextMenu={onContextMenu}
       className="inline-flex items-center justify-center rounded-[4px] border"
-      style={{
-        width: CELL_PX,
-        height: CELL_PX,
-        borderColor: active ? 'var(--accent)' : 'var(--border)',
-        background: active ? 'var(--bg-emphasis)' : 'var(--bg-subtle)',
-        boxShadow: active ? '0 0 0 1px var(--accent) inset' : undefined,
-      }}
+      style={cellFrame(active)}
     >
       {children}
     </button>
   );
+}
+
+/** Where a shade popover starts along its swatch grid, in the grid's px:
+ *  under its cell with their left edges aligned, or with their right edges
+ *  aligned when that would run past the grid's right edge, and kept inside
+ *  the grid either way. */
+function shadePopoverLeft(
+  cellLeft: number,
+  popoverWidth: number,
+  gridWidth: number,
+): number {
+  const left =
+    cellLeft + popoverWidth <= gridWidth
+      ? cellLeft
+      : cellLeft + CELL_PX - popoverWidth;
+  return Math.max(0, Math.min(left, gridWidth - popoverWidth));
+}
+
+/** The band of the viewport, top to bottom, where `el` can show: inside
+ *  every ancestor that clips its overflow (the inspector panel scrolls) and
+ *  inside the viewport. */
+function visibleBand(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let bottom = window.innerHeight;
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    if (getComputedStyle(p).overflowY === 'visible') continue;
+    const boxTop = p.getBoundingClientRect().top + p.clientTop;
+    top = Math.max(top, boxTop);
+    bottom = Math.min(bottom, boxTop + p.clientHeight);
+  }
+  return { top, bottom };
 }
 
 /** Coloured swatch cell with a chevron + shade-picker popover. The cell
@@ -446,6 +558,13 @@ function SwatchCell({
  *  When the user has picked a non-base rung, the active swatch in the
  *  picker is highlighted so they can see which shade is in use without
  *  needing to read the cssVar.
+ *
+ *  The popover is placed against the whole grid, like the custom
+ *  palette's, rather than hung off the cell: the inspector panel scrolls,
+ *  so it clips anything past its edges, and a popover hung off a cell in
+ *  the right-hand columns lost most of its shades. It opens under the
+ *  cell, or over it where the panel would cut it off below, and stays
+ *  inside the grid's edges (see shadePopoverLeft).
  *
  *  The FILL picker adds a second row to the popover: the stroke ladder for
  *  the same colour. The fill ladder is intentionally desaturated (so text
@@ -479,29 +598,6 @@ function SwatchCellWithShades({
   onPickBase: () => void;
   onPickShade: (rungCssVar: string) => void;
 }) {
-  // mono has no shadeKey - it's a pure single-token contrast swatch. Render
-  // the original SwatchCell behaviour so right-click doesn't open an empty
-  // popover. (Paper and ink now expose grey-shade ladders.)
-  if (!preset.shadeKey) {
-    return (
-      <SwatchCell
-        title={preset.label}
-        active={activeBase}
-        onClick={onPickBase}
-      >
-        <span
-          className="block rounded-[3px]"
-          style={{
-            width: CHIP_PX,
-            height: CHIP_PX,
-            background: preset.value,
-            border: '1px solid var(--border)',
-          }}
-        />
-      </SwatchCell>
-    );
-  }
-
   const ladder = shadeLadder(kind, preset.shadeKey);
   // Saturated second row: the stroke ladder, offered as a fill so the user
   // can reach the vivid hue the desaturated fill ladder never gets to.
@@ -512,83 +608,124 @@ function SwatchCellWithShades({
       ? shadeLadder('stroke', preset.shadeKey)
       : null;
 
+  // Placed against the grid once the popover has rendered and its size is
+  // known, before it paints, and again whenever the grid resizes: the grid
+  // re-wraps, which can move the cell to another column or row. Measured
+  // from the swatch button, not the cell around it: the cell is as tall as
+  // a line of text, so it grows with Settings ▸ Text size and the button
+  // sits lower in it.
+  const swatchRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverAt, setPopoverAt] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!shadePickerOpen) return;
+    const swatch = swatchRef.current;
+    const popover = popoverRef.current;
+    // The grid, which the popover is positioned against.
+    const grid = popover?.offsetParent;
+    if (!swatch || !popover || !(grid instanceof HTMLElement)) return;
+    const place = () => {
+      const g = grid.getBoundingClientRect();
+      const s = swatch.getBoundingClientRect();
+      const h = popover.offsetHeight;
+      const band = visibleBand(popover);
+      // Under the cell, or over it when it would be cut off below and there
+      // is room above.
+      const top =
+        s.bottom + 4 + h > band.bottom && s.top - 4 - h >= band.top
+          ? s.top - 4 - h
+          : s.bottom + 4;
+      const next = {
+        left: shadePopoverLeft(s.left - g.left, popover.offsetWidth, grid.clientWidth),
+        top: top - g.top,
+      };
+      setPopoverAt((at) =>
+        at?.left === next.left && at.top === next.top ? at : next,
+      );
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(grid);
+    return () => ro.disconnect();
+  }, [shadePickerOpen]);
+
   return (
-    <div
-      className="swatch-cell"
-      style={{ position: 'relative', display: 'inline-block' }}
-    >
-      <button
-        title={`${preset.label} - right-click or ▾ for shades`}
-        onClick={onPickBase}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onOpenShadePicker(!shadePickerOpen);
-        }}
-        className="inline-flex items-center justify-center rounded-[4px] border"
-        style={{
-          width: CELL_PX,
-          height: CELL_PX,
-          borderColor: activeBase ? 'var(--accent)' : 'var(--border)',
-          background: activeBase ? 'var(--bg-emphasis)' : 'var(--bg-subtle)',
-          boxShadow: activeBase ? '0 0 0 1px var(--accent) inset' : undefined,
-          position: 'relative',
-        }}
+    <>
+      <div
+        className="swatch-cell"
+        style={{ position: 'relative', display: 'inline-block' }}
       >
-        <span
-          className="block rounded-[3px]"
-          style={{
-            width: CHIP_PX,
-            height: CHIP_PX,
-            // When a non-base rung is picked, the cell paints THAT rung so
-            // the user sees their actual chosen shade, not the base swatch
-            // sitting visually-stale next to the inspector value.
-            background: activeRungValue ?? preset.value,
-            border: '1px solid var(--border)',
+        <button
+          ref={swatchRef}
+          title={`${preset.label} - right-click or ▾ for shades`}
+          onClick={onPickBase}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onOpenShadePicker(!shadePickerOpen);
           }}
-        />
-      </button>
-      {/* Tiny chevron - 10px badge in the bottom-right corner, revealed on
-       *  hover / focus (see .swatch-caret in globals.css) so the grid isn't
-       *  33 badges deep at rest. preventDefault on mousedown stops a
-       *  focus-shift while the popover is open, so the shade-cell click
-       *  doesn't lose its target. */}
-      <button
-        type="button"
-        title="Shades"
-        className="swatch-caret"
-        data-open={shadePickerOpen ? 'true' : 'false'}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenShadePicker(!shadePickerOpen);
-        }}
-        style={{
-          position: 'absolute',
-          right: -1,
-          bottom: -1,
-          width: 10,
-          height: 10,
-          padding: 0,
-          background: 'var(--bg)',
-          border: '1px solid var(--border)',
-          borderRadius: 2,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          color: 'var(--fg-muted)',
-          fontSize: 7,
-          lineHeight: 1,
-        }}
-      >
-        ▾
-      </button>
-      {shadePickerOpen && (
-        <div
+          className="inline-flex items-center justify-center rounded-[4px] border"
+          style={{ ...cellFrame(activeBase), position: 'relative' }}
+        >
+          <span
+            className="block rounded-[3px]"
+            style={{
+              width: CHIP_PX,
+              height: CHIP_PX,
+              // When a non-base rung is picked, the cell paints THAT rung so
+              // the user sees their actual chosen shade, not the base swatch
+              // sitting visually-stale next to the inspector value.
+              background: activeRungValue ?? preset.value,
+              border: '1px solid var(--border)',
+            }}
+          />
+        </button>
+        {/* Tiny chevron - 10px badge in the bottom-right corner, revealed on
+         *  hover / focus (see .swatch-caret in globals.css) so the grid isn't
+         *  33 badges deep at rest. preventDefault on mousedown stops a
+         *  focus-shift while the popover is open, so the shade-cell click
+         *  doesn't lose its target. */}
+        <button
+          type="button"
+          title="Shades"
+          className="swatch-caret"
+          data-open={shadePickerOpen ? 'true' : 'false'}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenShadePicker(!shadePickerOpen);
+          }}
           style={{
             position: 'absolute',
-            top: CELL_PX + 4,
-            left: 0,
+            right: -1,
+            bottom: -1,
+            width: 10,
+            height: 10,
+            padding: 0,
+            background: 'var(--bg)',
+            border: '1px solid var(--border)',
+            borderRadius: 2,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: 'var(--fg-muted)',
+            fontSize: 7,
+            lineHeight: 1,
+          }}
+        >
+          ▾
+        </button>
+      </div>
+      {/* A sibling of the cell rather than its child, so it is positioned
+       *  against the grid. Out of flow, so it takes no grid slot. */}
+      {shadePickerOpen && (
+        <div
+          ref={popoverRef}
+          style={{
+            position: 'absolute',
+            left: popoverAt?.left ?? 0,
+            top: popoverAt?.top ?? 0,
+            visibility: popoverAt ? undefined : 'hidden',
             zIndex: 60,
             padding: 4,
             borderRadius: 6,
@@ -641,9 +778,337 @@ function SwatchCellWithShades({
           ))}
         </div>
       )}
+    </>
+  );
+}
+/** The custom palette: colours the user saved, in the grid slot after the
+ *  named colours. The cell's chip is a 2 × 2 of the first four saved
+ *  colours, with dashed squares for empty slots, so it reads as "your
+ *  colours" rather than as one more swatch.
+ *
+ *  Clicking it (or right-clicking, like a shade cell) opens a popover under
+ *  the whole grid rather than under the cell: the cell sits mid-row, and a
+ *  popover anchored to it would run past the inspector's clipped right
+ *  edge. The popover's cells sit on the grid's own column track. Inside
+ *  it, a colour applies on click and leaves via its × badge or Delete; the
+ *  save cell keeps the current one-off colour; the add cell opens the
+ *  colour picker to make a new palette colour, without touching the
+ *  selection.
+ *
+ *  The popover's buttons keep focus where it was on mouse-down, as the
+ *  shade picker's do, so the inline label editor keeps its selection. */
+function CustomPaletteCell({
+  palette,
+  activeColour,
+  unsavedColour,
+  open,
+  onOpen,
+  onPick,
+  onSave,
+  onRemove,
+  adding,
+  onAdd,
+}: {
+  palette: readonly string[];
+  /** The saved colour the value uses, if any. */
+  activeColour: string | null;
+  /** A hex the value uses that isn't a preset and isn't saved yet. */
+  unsavedColour: string | null;
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  onPick: (colour: string) => void;
+  onSave: (colour: string) => void;
+  onRemove: (colour: string) => void;
+  /** The colour picker is open to add a colour. */
+  adding: boolean;
+  onAdd: () => void;
+}) {
+  const cellRef = useRef<HTMLButtonElement>(null);
+  const full = palette.length >= CUSTOM_PALETTE_MAX;
+  const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+  const close = () => {
+    onOpen(false);
+    cellRef.current?.focus();
+  };
+  // Removing the focused colour unmounts its button, so move focus first:
+  // to the next cell, else the previous one, else the palette cell. Focus
+  // left on <body> would send the next Escape or Delete to the canvas.
+  const removeFocused = (button: HTMLElement, colour: string) => {
+    const cell = button.closest('[data-palette-colour]');
+    const next = cell?.nextElementSibling ?? cell?.previousElementSibling;
+    const target =
+      next instanceof HTMLButtonElement ? next : next?.querySelector('button');
+    (target ?? cellRef.current)?.focus();
+    onRemove(colour);
+  };
+
+  return (
+    <div>
+      <button
+        ref={cellRef}
+        type="button"
+        title={
+          palette.length
+            ? 'custom palette - your saved colours'
+            : 'custom palette - save your own colours'
+        }
+        aria-label="Custom palette"
+        aria-expanded={open}
+        onClick={() => onOpen(!open)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onOpen(!open);
+        }}
+        onKeyDown={(e) => {
+          if (!open || e.key !== 'Escape') return;
+          // Stop here, or the editor's Escape also clears the selection.
+          e.stopPropagation();
+          onOpen(false);
+        }}
+        className="inline-flex items-center justify-center rounded-[4px] border"
+        style={{
+          ...cellFrame(activeColour !== null),
+          ...(open && activeColour === null
+            ? { background: 'var(--bg-emphasis)' }
+            : null),
+        }}
+      >
+        <PaletteChip colours={palette} />
+      </button>
+      {open && (
+        <div
+          role="group"
+          aria-label="Custom palette"
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            close();
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute',
+            top: `calc(100% + 4px)`,
+            // Border + padding outside the grid's edges, so the content box
+            // is exactly as wide as the grid and the columns line up.
+            left: -5,
+            right: -5,
+            zIndex: 60,
+            padding: 4,
+            borderRadius: 6,
+            background: 'var(--bg)',
+            border: '1px solid var(--border)',
+            boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+          }}
+        >
+          <div className="px-px pb-1 font-mono text-[10px] text-fg-muted">
+            custom palette
+          </div>
+          {(palette.length === 0 || full) && (
+            <p className="px-px pb-1.5 text-[11px] leading-snug text-fg-muted">
+              {full
+                ? 'Full. Remove a colour to add another.'
+                : 'Save colours here to reuse them in any diagram.'}
+            </p>
+          )}
+          <div
+            className="grid items-center"
+            style={{ gridTemplateColumns: CELL_TRACK, gap: CELL_GAP_PX }}
+          >
+            {palette.map((c) => (
+              <div
+                key={c}
+                data-palette-colour={c}
+                className="swatch-cell"
+                style={{ position: 'relative', display: 'inline-block' }}
+              >
+                <button
+                  type="button"
+                  title={c}
+                  aria-label={`Use ${c}`}
+                  aria-pressed={c === activeColour}
+                  aria-keyshortcuts="Delete"
+                  onMouseDown={keepFocus}
+                  onClick={() => onPick(c)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+                    // Stop here, or the editor deletes the selected shapes.
+                    e.preventDefault();
+                    e.stopPropagation();
+                    removeFocused(e.currentTarget, c);
+                  }}
+                  className="inline-flex items-center justify-center rounded-[4px] border"
+                  style={cellFrame(c === activeColour)}
+                >
+                  <span
+                    className="block rounded-[3px]"
+                    style={{
+                      width: CHIP_PX,
+                      height: CHIP_PX,
+                      background: c,
+                      border: '1px solid var(--border)',
+                    }}
+                  />
+                </button>
+                <button
+                  type="button"
+                  className="swatch-remove"
+                  title={`remove ${c}`}
+                  aria-label={`Remove ${c} from the custom palette`}
+                  // Keyboard users press Delete on the colour itself.
+                  tabIndex={-1}
+                  onMouseDown={keepFocus}
+                  onClick={() => onRemove(c)}
+                  style={{
+                    position: 'absolute',
+                    top: -3,
+                    right: -3,
+                    width: 11,
+                    height: 11,
+                    padding: 0,
+                    borderRadius: '50%',
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--fg-muted)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <svg width={5} height={5} viewBox="0 0 6 6" aria-hidden="true">
+                    <path
+                      d="M1 1l4 4M5 1L1 5"
+                      stroke="currentColor"
+                      strokeWidth={1.3}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            ))}
+            {unsavedColour && !full && (
+              <button
+                type="button"
+                title={`save ${unsavedColour} to the palette`}
+                aria-label={`Save ${unsavedColour} to the custom palette`}
+                onMouseDown={keepFocus}
+                onClick={() => onSave(unsavedColour)}
+                className="inline-flex items-center justify-center rounded-[4px] border"
+                style={cellFrame(false)}
+              >
+                <span
+                  className="relative block rounded-[3px]"
+                  style={{
+                    width: CHIP_PX,
+                    height: CHIP_PX,
+                    background: unsavedColour,
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <svg
+                    width={10}
+                    height={10}
+                    viewBox="0 0 10 10"
+                    aria-hidden="true"
+                    style={{ position: 'absolute', right: -4, bottom: -4 }}
+                  >
+                    <circle cx={5} cy={5} r={4.5} fill="var(--bg)" stroke="var(--border)" />
+                    <path
+                      d="M5 2.75v4.5M2.75 5h4.5"
+                      stroke="var(--fg)"
+                      strokeWidth={1.2}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+              </button>
+            )}
+            {!full && (
+              <button
+                type="button"
+                title="add a colour…"
+                aria-label="Add a colour to the custom palette"
+                aria-haspopup="dialog"
+                aria-expanded={adding}
+                onClick={onAdd}
+                className="inline-flex items-center justify-center rounded-[4px] border"
+                style={cellFrame(adding)}
+              >
+                <AddColourGlyph />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+/** The palette cell's chip: the first four saved colours as a 2 × 2, empty
+ *  slots dashed, so the cell previews the palette it opens. */
+function PaletteChip({ colours }: { colours: readonly string[] }) {
+  return (
+    <svg width={CHIP_PX} height={CHIP_PX} viewBox="0 0 16 16" aria-hidden="true">
+      {[0, 1, 2, 3].map((i) => {
+        const x = (i % 2) * 8.5;
+        const y = i < 2 ? 0 : 8.5;
+        const colour = colours[i];
+        return colour ? (
+          <rect
+            key={i}
+            x={x + 0.25}
+            y={y + 0.25}
+            width={7}
+            height={7}
+            rx={1.5}
+            fill={colour}
+            stroke="var(--border)"
+            strokeWidth={0.5}
+          />
+        ) : (
+          <rect
+            key={i}
+            x={x + 0.75}
+            y={y + 0.75}
+            width={6}
+            height={6}
+            rx={1.5}
+            fill="none"
+            stroke="var(--fg-muted)"
+            strokeWidth={0.75}
+            strokeDasharray="1.5 1.25"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/** Dashed square with a plus: an empty slot to fill with a colour. */
+function AddColourGlyph() {
+  return (
+    <svg width={CHIP_PX} height={CHIP_PX} viewBox="0 0 16 16" aria-hidden="true">
+      <rect
+        x={0.75}
+        y={0.75}
+        width={14.5}
+        height={14.5}
+        rx={3}
+        fill="none"
+        stroke="var(--fg-muted)"
+        strokeWidth={1}
+        strokeDasharray="2.5 2"
+      />
+      <path
+        d="M8 4.75v6.5M4.75 8h6.5"
+        stroke="var(--fg)"
+        strokeWidth={1.3}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 // Keeps the linter happy that SHADE_RUNGS is referenced - the constant is
 // exported from swatches.ts and imported here so other call-sites can
 // derive ladder lengths without re-reading the array. We don't need it

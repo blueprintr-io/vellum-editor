@@ -62,7 +62,7 @@ export function Section({
   compact = false,
   /** When set, the header becomes a disclosure toggle and the open/closed
    *  state is remembered on the store under this key (persisted, like
-   *  `libraryPanelOpen`). Keys are namespaced by the caller -
+   *  `inspectorOpen`). Keys are namespaced by the caller -
  * `shape:APPEARANCE`, `connector:ROUTING` - so the shape and connector
    *  panels can fold the same-named section independently. Sections
    *  without a key render the plain static header. */

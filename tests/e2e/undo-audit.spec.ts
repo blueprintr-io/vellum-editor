@@ -6,7 +6,7 @@ import { test, expect, type Page } from './fixtures';
  *
  *   - an inspector slider scrub used to push one entry per pointer frame
  *     (Cmd+Z walked the radius back 1px at a time);
- *   - the custom colour input did the same for every frame of the OS picker;
+ *   - a colour picker drag did the same for every frame;
  *   - a table gridline drag pushed nothing at all (and poisoned the next
  *     edit's undo baseline);
  *   - an inline text session on a text shape was never sealed, so the next
@@ -134,32 +134,31 @@ test('scrubbing the roundness slider is one undo step, and Cmd+Z keeps the selec
   expect((await read(page)).radius).toBe(after.radius);
 });
 
-test('a custom colour pick is one undo step', async ({ page }) => {
+test('a colour picker drag is one undo step', async ({ page }) => {
   await seed(page);
   await select(page, 'r');
-  const color = page.locator('input[type="color"]').first();
-  await color.waitFor({ state: 'attached' });
   const before = await read(page);
 
-  // Simulate a drag inside the OS picker: a run of `input` events with
-  // changing values, then the `change` the picker fires on close. Values
-  // go through the native setter so React's value tracker sees them.
-  await page.evaluate(() => {
-    const el = document.querySelector('input[type="color"]') as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      'value',
-    )!.set!;
-    for (const v of ['#112233', '#223344', '#334455', '#445566', '#556677']) {
-      setter.call(el, v);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  // The fill row's "more colours" cell (the stroke row's comes first).
+  await page.getByTitle('more colours…').nth(1).click();
+  const field = page
+    .getByRole('dialog', { name: 'Fill colour' })
+    .locator('.cursor-crosshair');
+  await field.waitFor();
+  const box = (await field.boundingBox())!;
+  const at = (fx: number, fy: number) =>
+    [box.x + box.width * fx, box.y + box.height * fy] as const;
+  await page.mouse.move(...at(0.2, 0.2));
+  await page.mouse.down();
+  for (const [fx, fy] of [[0.3, 0.25], [0.5, 0.3], [0.7, 0.35], [0.9, 0.1]]) {
+    await page.mouse.move(...at(fx, fy), { steps: 3 });
+  }
+  await page.mouse.up();
   await page.waitForTimeout(100);
 
   const after = await read(page);
-  expect([after.fill, after.stroke]).toContain('#556677');
+  expect(after.fill).toMatch(/^#[0-9a-f]{6}$/);
+  expect(after.fill).not.toBe(before.fill);
   expect(after.past).toBe(before.past + 1);
 
   await storeUndo(page);

@@ -48,14 +48,11 @@
   --sketch: #ff6b3d;
   --refined: #58a6ff;
 
-  /* `--mono` is the OPPOSITE-of-ink contrast swatch - it gives users a one-
-   *  click way to pick the colour ink isn't. In dark mode `--ink` is near-
-   *  white (#e6edf3), so `--mono` is pure black; in light mode `--ink` is
-   *  near-black (#1c1a14), so `--mono` is pure white (see html.theme-light).
-   *  This is why the swatch row reads as exactly one black AND one white in
-   *  both themes - `--ink` covers the same-as-text shade, `--mono` covers
-   *  the inverse. Without the flip we ended up with two near-blacks in
-   *  light mode and two near-whites in dark mode. */
+  /* `--mono` is the OPPOSITE-of-ink contrast colour: pure black in dark
+   *  mode (where `--ink` is near-white), pure white in light mode (see
+   *  html.theme-light). The swatch row used to offer it; that slot is now
+   *  the custom palette, but shapes that stored `var(--mono)` keep
+   *  rendering through this token. */
   --mono: #000000;
 
   /* Coloured swatches - auto-switch with the theme.
@@ -282,8 +279,8 @@ html.theme-light {
   --notes-ink-rgb: 202 138 4;
   --notes-glow: 234 179 8;
 
-  /* Light-mode flip of `--mono`. Inverse of `--ink` (which is near-black on
-   *  light) so the swatch row offers exactly one black + one white. */
+  /* Light-mode flip of `--mono`: the inverse of `--ink`, which is
+   *  near-black on light. */
   --mono: #ffffff;
 
   /* Light-mode swatch values - the original Vellum palette. Pastel fills sit

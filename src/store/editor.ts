@@ -84,6 +84,7 @@ import {
   sanitizeTextScale,
   type TextScale,
 } from '@/editor/text-scale';
+import { samePalette, sanitizeCustomPalette } from '@/editor/custom-palette';
 // renderPipeline is exposed through the file menu rather than booted by default.
 void renderPipeline;
 
@@ -533,7 +534,9 @@ export type EditorState = {
   /** Persistent left-side library card. Toggled from the Brand expand button.
    *  Independent of `morePopoverOpen` (which is the floating quick-pick) so the
    *  user can have both surfaces open if they want - different muscle memory.
-   *  Searches the local icon manifest when the user types a query. */
+   *  Searches the local icon manifest when the user types a query.
+   *  Every launch starts with it open (see `libraryOpensAtLaunch`), so it is
+   *  not persisted: closing it lasts until the editor is next opened. */
   libraryPanelOpen: boolean;
   /** TRADEMARK-COMPLIANCE: hamburger → "Legal" dialog state. The library
    *  picker also opens it via "Report an issue" / "About" links, so it
@@ -555,7 +558,7 @@ export type EditorState = {
    *  namespaced section id the panels pass to `Section` (`shape:BODY`,
    *  `connector:ROUTING`). Persisted so a folded LAYER section stays folded
    *  across reloads - the same "remember my layout" contract as
-   *  `libraryPanelOpen`. Absent key = open. */
+   *  `inspectorOpen`. Absent key = open. */
   collapsedInspectorSections: Record<string, boolean>;
 
   // history (kept on the same store so all atomic mutations route through it)
@@ -886,6 +889,14 @@ export type EditorState = {
   setShowDots: (v: boolean) => void;
   setShowGrid: (v: boolean) => void;
   setShowMeasurements: (v: boolean) => void;
+  /** Colours the user saved from the swatch picker's custom palette cell,
+   *  as lower-case `#rrggbb`, oldest first. A preference, so it follows the
+   *  user across diagrams and never enters undo history. Hosts that keep
+   *  preferences per account write it through `setCustomPalette`. */
+  customPalette: string[];
+  /** Replace the palette. Sanitised (see editor/custom-palette.ts), and a
+   *  no-op when nothing changes so subscribers only hear real edits. */
+  setCustomPalette: (colours: readonly string[]) => void;
   /** Image-export settings (scale / padding / background / fonts).
    *  Persisted so the export dialog and the one-click Copy PNG button
    *  remember the last choice. Values are clamped on write - see
@@ -1044,11 +1055,11 @@ type PersistedSlice = Pick<
   | 'uiTextScale'
   | 'personalLibrary'
   | 'canvasPaper'
+  | 'customPalette'
   | 'showDots'
   | 'showGrid'
   | 'showMeasurements'
   | 'exportPrefs'
-  | 'libraryPanelOpen'
   | 'rightDockOpen'
   | 'rightDockWidth'
   | 'lastStyles'
@@ -1717,6 +1728,26 @@ export function newId(prefix: string): string {
   return `${prefix}-${(++_idCounter).toString(36)}`;
 }
 
+/** Narrowest screen, measured on its short side, that starts the editor with
+ *  the library panel open. Same 640px as the `pane-sm` breakpoint
+ *  (useChromeFit's PANE_SM_PX): below it the panel is a bottom sheet over
+ *  most of the canvas rather than a side rail. */
+const LIBRARY_AT_LAUNCH_MIN_SCREEN_PX = 640;
+
+/** Whether the library panel is open when the editor starts. It is, except
+ *  on a phone-sized screen, where it would cover the canvas and waits to be
+ *  opened instead. It measures the screen's short side, so a phone starts
+ *  closed in either orientation, and an embed iframe that has not been laid
+ *  out yet (its window can report a width of 0) still gets the desktop
+ *  default. A screen that reports no size counts as a desktop. */
+export function libraryOpensAtLaunch(
+  screen: Pick<Screen, 'width' | 'height'> | undefined =
+    typeof window === 'undefined' ? undefined : window.screen,
+): boolean {
+  if (!screen?.width || !screen.height) return true;
+  return Math.min(screen.width, screen.height) >= LIBRARY_AT_LAUNCH_MIN_SCREEN_PX;
+}
+
 let hydrationStart: Pick<EditorState, 'workspaceId' | 'workspaceRevision' | 'diagram' | 'diagramTabs' | 'tabSnapshots'> | undefined;
 /** Persisted fields that belong to the open document rather than the user. */
 const RECOVERED_DOCUMENT_FIELDS = new Set(['diagram', 'filePath', 'dirty', 'workspaceRevision', 'savedRevision', 'diagramTabs', 'activeTabId', 'tabSnapshots']);
@@ -2180,6 +2211,7 @@ export const useEditor = create<EditorState>()(
         uiTextScale: DEFAULT_TEXT_SCALE,
 
         canvasPaper: undefined,
+        customPalette: [],
         showDots: true,
         showGrid: false,
         exportPrefs: DEFAULT_EXPORT_PREFS,
@@ -2222,7 +2254,7 @@ export const useEditor = create<EditorState>()(
         saveDialogOpen: false,
         saveDialogFormat: null,
         saveDialogSelectionOnly: false,
-        libraryPanelOpen: false,
+        libraryPanelOpen: libraryOpensAtLaunch(),
         legalDialogOpen: false,
         legalDialogTab: 'ip-complaints',
         findOpen: false,
@@ -4390,6 +4422,11 @@ export const useEditor = create<EditorState>()(
         setShowDots: (v) => set({ showDots: v }),
         setShowGrid: (v) => set({ showGrid: v }),
         setShowMeasurements: (v) => set({ showMeasurements: v }),
+        setCustomPalette: (colours) => {
+          const next = sanitizeCustomPalette(colours);
+          if (samePalette(next, get().customPalette)) return;
+          set({ customPalette: next });
+        },
         setExportPrefs: (p) =>
           set((s) => ({
             exportPrefs: sanitizeExportPrefs({ ...s.exportPrefs, ...p }),
@@ -4771,11 +4808,11 @@ export const useEditor = create<EditorState>()(
         uiTextScale: s.uiTextScale,
         personalLibrary: s.personalLibrary,
         canvasPaper: s.canvasPaper,
+        customPalette: s.customPalette,
         showDots: s.showDots,
         showGrid: s.showGrid,
         showMeasurements: s.showMeasurements,
         exportPrefs: s.exportPrefs,
-        libraryPanelOpen: s.libraryPanelOpen,
         lastStyles: s.lastStyles,
         lastConnectorStyle: s.lastConnectorStyle,
         recentShapes: s.recentShapes,
@@ -4853,11 +4890,17 @@ export const useEditor = create<EditorState>()(
           const merged: typeof current = {
             ...current,
             ...p,
+            // Older builds saved this with the preferences. Every launch now
+            // starts with the library open, so a saved `false` must not
+            // close it again.
+            libraryPanelOpen: current.libraryPanelOpen,
             shapeSnapEnabled,
             gridSnapEnabled,
             snapEnabled: shapeSnapEnabled || gridSnapEnabled,
             // Feeds a CSS multiplier, so only an offered step gets through.
             uiTextScale: sanitizeTextScale(p.uiTextScale ?? current.uiTextScale),
+            // Added after v1 preferences, so older saves have no key.
+            customPalette: sanitizeCustomPalette(p.customPalette ?? current.customPalette),
             hotkeyBindings: DEFAULT_BINDINGS,
             // Re-validate + backfill: a persisted prefs object from an
             // older build may lack newer keys or carry an out-of-range

@@ -29,7 +29,8 @@ async function seed(page: Page) {
       const editor = (
         mod as { useEditor: { getState: () => any; setState: (s: object) => void } }
       ).useEditor;
-      editor.setState({ hasCompletedOnboarding: true });
+      // The library opens at launch, and its rail covers the canvas's left edge.
+      editor.setState({ hasCompletedOnboarding: true, libraryPanelOpen: false });
       editor.getState().loadDiagram(
         { version: '1.0', meta: { title: 'gestures' }, shapes, connectors, annotations: [] },
         null,

@@ -22,7 +22,8 @@ async function seed(page: Page) {
     const mod = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
     const editor = (mod as { useEditor: { getState: () => any; setState: (s: object) => void } })
       .useEditor;
-    editor.setState({ hasCompletedOnboarding: true });
+    // The library opens at launch, and its rail covers the canvas's left edge.
+    editor.setState({ hasCompletedOnboarding: true, libraryPanelOpen: false });
     editor.getState().loadDiagram(
       {
         version: '1.0',

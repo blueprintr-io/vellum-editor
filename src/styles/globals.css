@@ -248,7 +248,8 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .section-caret,
-    .swatch-caret {
+    .swatch-caret,
+    .swatch-remove {
       transition: none;
     }
   }
@@ -274,6 +275,69 @@
   }
   @media (hover: none) {
     .swatch-caret {
+      opacity: 1;
+    }
+  }
+
+  /* Colour picker hue slider: the hue circle as the track, a ring in the
+   * current hue as the thumb (--hue-thumb, set inline). */
+  .colour-hue {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 12px;
+    margin: 0;
+    border-radius: 6px;
+    background: linear-gradient(
+      to right,
+      #f00 0%,
+      #ff0 16.67%,
+      #0f0 33.33%,
+      #0ff 50%,
+      #00f 66.67%,
+      #f0f 83.33%,
+      #f00 100%
+    );
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
+    cursor: pointer;
+    outline: none;
+  }
+  .colour-hue::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--hue-thumb, #fff);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 1px 4px rgb(0 0 0 / 0.4);
+  }
+  .colour-hue::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--hue-thumb, #fff);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35), 0 1px 4px rgb(0 0 0 / 0.4);
+  }
+  .colour-hue:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Remove badge on a custom palette colour. Same reveal rules as the shade
+   * caret: hover or keyboard focus, and always on pointer-less devices. */
+  .swatch-remove {
+    opacity: 0;
+    transition: opacity 100ms ease;
+  }
+  .swatch-cell:hover .swatch-remove,
+  .swatch-cell:has(:focus-visible) .swatch-remove {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .swatch-remove {
       opacity: 1;
     }
   }

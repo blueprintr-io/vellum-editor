@@ -7,6 +7,12 @@ export type { VellumEditorProps } from './editor/Editor';
 export { useEditor } from './store/editor';
 export { setUnsavedChangesPrompt } from './editor/useAutosave';
 
+// The custom colour palette is a user preference (`customPalette` on the
+// store, written through `setCustomPalette`). Hosts that keep preferences
+// per account can store it and apply it with the same rule the editor uses.
+export { CUSTOM_PALETTE_MAX, sanitizeCustomPalette } from './editor/custom-palette';
+export { parseColour } from './editor/colour';
+
 /** Default slim bottom bar used by the `diagramTabs` plugin slot. Embedders
  *  who want the standalone-style chrome can register a plugin with
  *  `diagramTabs: <DiagramTabsBar />`; embedders that omit the slot get no
