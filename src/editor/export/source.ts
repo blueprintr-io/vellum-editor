@@ -18,10 +18,22 @@ export function extractSourceFromPng(bytes: Uint8Array): string | null {
   return text && text.trim() ? text : null;
 }
 
+/** A numeric reference decodes only when its number is a nonzero Unicode
+ *  scalar value. Anything else (0, a surrogate half, past U+10FFFF, too
+ *  long to parse) stays as written. String.fromCodePoint throws a
+ *  RangeError past U+10FFFF, which failed Open and turned a drop or paste
+ *  into a plain image insert, and returns a lone surrogate for a surrogate
+ *  half. */
+function fromNumericReference(whole: string, code: number): string {
+  return code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+    ? String.fromCodePoint(code)
+    : whole;
+}
+
 function unescapeXml(s: string): string {
   return s
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => fromNumericReference(m, parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (m, d) => fromNumericReference(m, parseInt(d, 10)))
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')

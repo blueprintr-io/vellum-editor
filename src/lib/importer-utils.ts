@@ -3,6 +3,15 @@
 
 import type { DiagramState, EndpointMarker } from '@/store/types';
 
+/** The named entities draw.io and mermaid emit in HTML labels. */
+const LABEL_ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+};
+
 /** Convert an HTML-fragment label (as draw.io and mermaid both emit) to
  *  plain text. Block-level tags become newlines, everything else is
  *  stripped, named/numeric entities are decoded, and triple+ blank lines
@@ -18,15 +27,22 @@ export function htmlLabelToPlainText(s: string): string {
     .replace(/<[^>]+>/g, '');
   // Decode the named entities draw.io and mermaid actually emit, plus
   // numeric decimal entities - both are rare in those tools' output but
-  // cheap to handle.
-  const decoded = lined
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+  // cheap to handle. One pass, so the text an entity decodes to is never
+  // decoded again: `&amp;lt;` is the text "&lt;" and `&#38;amp;` is "&amp;".
+  // Decoding `&amp;` first turned the former into "<", and decoding it last
+  // would turn the latter into "&". A decimal reference decodes by code
+  // point, and only when its number is a nonzero Unicode scalar value: 0, a
+  // surrogate half or a number past U+10FFFF stays as written
+  // (String.fromCharCode wrapped past U+FFFF, so `&#128512;` came out as
+  // U+F600).
+  const entity = /&(?:(nbsp|amp|lt|gt|quot)|#(\d+));/g;
+  const decoded = lined.replace(entity, (m, name, n) => {
+    if (name) return LABEL_ENTITIES[name];
+    const code = parseInt(n, 10);
+    return code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+      ? String.fromCodePoint(code)
+      : m;
+  });
   // Collapse triple+ blank lines (common when the user mixed `<br><br>` for
   // visual padding) and trim.
   return decoded.replace(/\n{3,}/g, '\n\n').trim();
