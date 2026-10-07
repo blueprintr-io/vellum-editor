@@ -60,8 +60,9 @@ function walkToRoot(
     const parent = byId(cur.parent);
     if (!parent) break;
     // Stop at containers - children of a container are independently
-    // selectable.
-    if (parent.kind === 'container' || parent.kind === 'rack' || cur.notation?.type === 'bpmn-boundary') break;
+    // selectable. So are a rack's units, and their equipment's modules and
+    // interfaces (each its own link target).
+    if (parent.kind === 'container' || parent.kind === 'rack' || parent.rackUnit || parent.rackModule || cur.notation?.type === 'bpmn-boundary') break;
     // If the parent is the group the user has "entered", stop here so
     // the resolved hit is the direct child rather than the focused
     // group itself. Without this, focus mode would still bubble

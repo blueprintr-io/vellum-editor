@@ -10,7 +10,7 @@ test('rack U icon picker and vendor icon drop replace only the addressed U, pres
     .getByRole('button', { name: 'Search icons…', exact: true })
     .click();
   await page
-    .getByPlaceholder('Search icons (aws, kubernetes…)')
+    .getByPlaceholder('Search equipment and icons (fw, 48 port…)')
     .fill('Amazon EC2');
   await page
     .getByRole('button', { name: /Amazon EC2/ })
@@ -81,11 +81,8 @@ test('Racks palette inserts a native rack, U controls add equipment and preserve
   );
   await page.getByLabel('Select rack unit').selectOption({ label: 'U1' });
   const id = await page.getByLabel('Select rack unit').inputValue();
-  // The library also has equipment tiles, so scope to the unit inspector.
-  await page
-    .locator('fieldset')
-    .getByRole('button', { name: 'Network switch', exact: true })
-    .click();
+  // The library lists equipment too, so ask for the inspector's list.
+  await page.getByRole('combobox', { name: 'Equipment', exact: true }).selectOption('switch');
   await page.getByPlaceholder('Equipment label').fill('Core switch');
   await page.getByPlaceholder('Equipment label').press('Tab');
   const row = page.locator(`[data-shape-id="${id}"]`);
@@ -201,9 +198,11 @@ test('palette equipment drag targets one U without creating another shape; SVG e
     .getByRole('button', { name: 'Rack server', exact: true })
     .dragTo(slot);
   await expect(slot.locator('svg')).toHaveCount(1);
+  // One shape per U and the rack, plus a target per server interface.
+  await expect(slot.locator('[data-rack-target="port"]')).toHaveCount(3);
   await expect(
     page.locator('[data-vellum-canvas] [data-shape-id]'),
-  ).toHaveCount(13);
+  ).toHaveCount(13 + 3);
   await slot.click();
   await expect(
     slot.getByRole('button', { name: 'Choose icon for U2' }),

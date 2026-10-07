@@ -8,6 +8,7 @@ import {
   detectBranded,
   isDeniedBundledBrand,
 } from '@/lib/branded-icon-namespaces';
+import { FuzzyIndex } from '@/lib/fuzzy-search';
 import { sanitizeSvg } from '@/lib/sanitize-svg';
 
 const MANIFEST_URL = '/icons/manifest.json';
@@ -146,24 +147,53 @@ export async function loadVendorPack(vendorKey: string): Promise<VendorPack> {
   return promise;
 }
 
+/** Complete matches enough to fill a picker; below this, icons missing one
+ *  of the query's words fill in after them. */
+const ENOUGH_COMPLETE = 12;
+
+/** The search index over the loaded icons, built by the first search. */
+let _searchIndex: { icons: ManifestEntry[]; index: FuzzyIndex } | null = null;
+
+function manifestSearchIndex(m: Manifest): FuzzyIndex {
+  if (_searchIndex?.icons !== m.icons) {
+    _searchIndex = {
+      icons: m.icons,
+      index: new FuzzyIndex(
+        m.icons.map((e) => ({
+          name: e.n,
+          keywords: e.k,
+          context: [e.v, m.vendors[e.v]?.name ?? '', e.c ?? ''],
+        })),
+      ),
+    };
+  }
+  return _searchIndex.index;
+}
+
+/** Icons for a picker query, best first. Forgiving (see @/lib/fuzzy-search):
+ *  "fw" finds firewalls, "swtich" switches, "aws firewall" AWS's firewalls
+ *  and then everyone else's. A query that is an icon's whole id, name or
+ *  keyword always puts that icon first. */
 export function searchManifest(
   query: string,
   limit = 24,
 ): Array<{ entry: ManifestEntry; vendor: ManifestVendor }> {
   if (!_manifest || !query.trim()) return [];
+  const manifest = _manifest;
   const q = query.trim().toLowerCase();
+  let hits = manifestSearchIndex(manifest).search(q);
+  const complete = hits.filter((h) => !h.missing);
+  if (complete.length >= ENOUGH_COMPLETE) hits = complete;
   const scored: Array<{
     entry: ManifestEntry;
     vendor: ManifestVendor;
     score: number;
   }> = [];
-
-  for (const entry of _manifest.icons) {
-    const score = scoreEntry(entry, q);
-    if (score === 0) continue;
-    const vendor = _manifest.vendors[entry.v];
+  for (const hit of hits) {
+    const entry = manifest.icons[hit.index];
+    const vendor = manifest.vendors[entry.v];
     if (!vendor) continue;
-    scored.push({ entry, vendor, score });
+    scored.push({ entry, vendor, score: Math.max(exactScore(entry, q), hit.score) });
   }
 
   scored.sort((a, b) => {
@@ -190,22 +220,10 @@ function shortHolder(full: string): string {
     .join(' ');
 }
 
-function scoreEntry(entry: ManifestEntry, q: string): number {
-  const id = entry.id.toLowerCase();
-  const name = entry.n.toLowerCase();
-
-  if (id === q) return 1000;
-  if (name === q) return 500;
-  for (const k of entry.k) {
-    if (k.toLowerCase() === q) return 200;
-  }
-  if (name.startsWith(q)) return 100;
-  for (const k of entry.k) {
-    if (k.toLowerCase().startsWith(q)) return 50;
-  }
-  if (name.includes(q)) return 25;
-  for (const k of entry.k) {
-    if (k.toLowerCase().includes(q)) return 10;
-  }
+/** A query that is an icon's whole id, name or one of its keywords. */
+function exactScore(entry: ManifestEntry, q: string): number {
+  if (entry.id.toLowerCase() === q) return 1000;
+  if (entry.n.toLowerCase() === q) return 500;
+  for (const k of entry.k) if (k.toLowerCase() === q) return 200;
   return 0;
 }

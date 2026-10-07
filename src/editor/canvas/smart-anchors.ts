@@ -24,6 +24,7 @@
  */
 
 import type { Anchor, Shape } from '@/store/types';
+import { rackUnitAnchorFractions } from '@/editor/rack/geometry';
 import { fromShapeLocal, pointNearShape, toShapeLocal } from './projection';
 import { shapeAnchorPoint } from './routing';
 
@@ -246,6 +247,16 @@ export function smartAnchorPoints(
   globalDefault: number = SMART_ANCHOR_DEFAULT_COUNT,
 ): { fx: number; fy: number; x: number; y: number }[] {
   if (shape.kind === 'freehand') return [];
+  // Rack equipment, modules and interfaces have their own fixed sets (an
+  // interface: one point, its cable side) - extras would land between
+  // interfaces and read as ports that aren't there.
+  const own = rackUnitAnchorFractions(shape);
+  if (own) {
+    return own.map(([fx, fy]) => {
+      const [x, y] = shapeAnchorPoint(shape, [fx, fy]);
+      return { fx, fy, x, y };
+    });
+  }
   const fr: [number, number][] = [...FIXED_ANCHOR_FRACTIONS];
   if (wantsExtra) {
     fr.push(

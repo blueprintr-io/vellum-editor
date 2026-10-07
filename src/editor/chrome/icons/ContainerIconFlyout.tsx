@@ -27,11 +27,21 @@ import { useEditor, newId } from '@/store/editor';
 import { resolveIcon } from '@/icons/resolve';
 import type { IconDragPayload } from '@/icons/types';
 import type { Shape } from '@/store/types';
+import { rackChildDefaultLabel, rackUnitIconPatch } from '@/editor/rack/model';
+import {
+  RACK_EQUIPMENT_LIST_ID,
+  RackEquipmentResults,
+  rackEquipmentOptionId,
+  useRackEquipmentMatches,
+} from '@/editor/rack/RackEquipmentResults';
+import type { RackEquipmentMatch } from '@/editor/rack/search';
 import { I } from '../icons';
 import { IconSearchResults } from './IconSearchResults';
 
 const FLYOUT_W = 300;
 const FLYOUT_H = 360;
+/** Taller for a rack unit, which lists its equipment above the icons. */
+const RACK_FLYOUT_H = 440;
 const VIEWPORT_PAD = 8;
 
 /** What the picked icon attaches to:
@@ -54,6 +64,16 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // A rack unit (not a shelf item, which takes icons only) leads with the
+  // rack equipment catalogue: what goes in a U is usually equipment.
+  const equipment = useEditor(
+    (s) => target.kind === 'rack-unit' && !!s.diagram.shapes.find((x) => x.id === target.unitId)?.rackUnit,
+  );
+  const allMatches = useRackEquipmentMatches(query);
+  const matches = equipment ? allMatches : NO_MATCHES;
+  const [active, setActive] = useState(0);
+  useEffect(() => setActive(0), [query]);
+  const height = equipment ? RACK_FLYOUT_H : FLYOUT_H;
 
   // Outside-click + Escape to close. Defer attaching by a tick so the click
   // that opened us doesn't immediately close us via outside-click on its own
@@ -87,12 +107,22 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
     if (left + FLYOUT_W + VIEWPORT_PAD > vw) {
       left = Math.max(VIEWPORT_PAD, vw - FLYOUT_W - VIEWPORT_PAD);
     }
-    if (top + FLYOUT_H + VIEWPORT_PAD > vh) {
+    if (top + height + VIEWPORT_PAD > vh) {
       // Not enough room below - flip above the anchor.
-      top = Math.max(VIEWPORT_PAD, anchor.y - FLYOUT_H - 12);
+      top = Math.max(VIEWPORT_PAD, anchor.y - height - 12);
     }
     return { left, top };
-  }, [anchor]);
+  }, [anchor, height]);
+
+  /** Fit catalogue equipment, with any options the search named. */
+  const fit = (match: RackEquipmentMatch) => {
+    if (busy || target.kind !== 'rack-unit') return;
+    const fitted = useEditor
+      .getState()
+      .setRackUnitDevice(target.unitId, match.spec.type, { options: match.options, span: match.span });
+    if (fitted) onClose();
+    else setError('This unit can’t take equipment right now.');
+  };
 
   const pick = async (payload: IconDragPayload, label: string) => {
     if (busy) return;
@@ -112,19 +142,32 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
         const existing = state.diagram.shapes.find(
           (s) => s.id === (target.kind === 'icon' ? target.iconShapeId : target.unitId),
         );
-        if (!existing || (target.kind === 'icon' ? existing.kind !== 'icon' : !existing.rackUnit)) {
+        if (!existing || (target.kind === 'icon' ? existing.kind !== 'icon' : !existing.rackUnit && !existing.rackModule)) {
           throw new Error('Icon missing - was it deleted?');
         }
         // The tint (and any `iconRecolor` mode) rides through the swap
         // untouched. It used to be wiped when the incoming icon was
         // vendor-locked; every icon is recolourable now, so dropping the
         // user's colour on an AWS→AWS swap would just be losing their work.
-        state.updateShape(existing.id, {
-          ...(target.kind === 'rack-unit' && existing.label === `U${existing.rackUnit?.u}` ? {label} : {}),
+        const icon = {
           iconSvg: resolved.svg,
           iconAttribution: resolved.attribution,
           iconConstraints: resolved.constraints,
-        });
+        };
+        state.updateShape(
+          existing.id,
+          target.kind === 'rack-unit'
+            ? rackUnitIconPatch(
+                existing,
+                icon,
+                label,
+                // A shelf item still called "Item 2" takes the icon's name.
+                existing.rackModule
+                  ? existing.label === rackChildDefaultLabel(state.diagram.shapes, existing)
+                  : undefined,
+              )
+            : icon,
+        );
         onClose();
         setBusy(false);
         return;
@@ -223,7 +266,7 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
         left: position.left,
         top: position.top,
         width: FLYOUT_W,
-        maxHeight: FLYOUT_H,
+        maxHeight: height,
       }}
       onPointerDown={(e) => {
         // Don't let pointer events bubble up to the canvas - without this
@@ -244,19 +287,48 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
             if (e.key === 'Escape') {
               e.preventDefault();
               onClose();
+            } else if (matches.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+              e.preventDefault();
+              const next = (active + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+              setActive(next);
+              document.getElementById(rackEquipmentOptionId(matches[next]))?.scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter' && !e.nativeEvent.isComposing && matches[active]) {
+              // (An Enter that confirms an IME composition isn't a pick.)
+              e.preventDefault();
+              fit(matches[active]);
             }
           }}
-          placeholder="Search icons (aws, kubernetes…)"
+          {...(equipment && {
+            role: 'combobox',
+            'aria-expanded': matches.length > 0,
+            'aria-controls': RACK_EQUIPMENT_LIST_ID,
+            'aria-autocomplete': 'list' as const,
+            'aria-activedescendant': matches[active] ? rackEquipmentOptionId(matches[active]) : undefined,
+          })}
+          placeholder={equipment ? 'Search equipment and icons (fw, 48 port…)' : 'Search icons (aws, kubernetes…)'}
           className="w-full pl-[30px] pr-[10px] py-[7px] bg-bg-subtle border border-border rounded-md text-fg text-[12px] font-body placeholder:text-fg-muted outline-none focus:border-accent/60"
         />
       </div>
       <div className="flex-1 overflow-y-auto">
+        {matches.length > 0 && (
+          <RackEquipmentResults
+            matches={matches}
+            grouped={!query.trim()}
+            active={active}
+            onActive={setActive}
+            onPick={fit}
+          />
+        )}
         {query.trim() ? (
           // Unified picker - same component the LibraryPanel /
           // MoreShapesPopover search bar drives. Click-pick mode is engaged
           // via `onPick`, so tiles attach to the container instead of
           // becoming drag sources.
           <IconSearchResults query={query} cols={4} onPick={busy ? noopPick : pick} />
+        ) : equipment ? (
+          <div className="px-2 pt-1 pb-3 text-center text-fg-muted text-[10px]">
+            Type to search icons as well. A picked icon replaces the equipment.
+          </div>
         ) : (
           <div className="px-2 py-6 text-center text-fg-muted text-[11px] leading-relaxed">
             Type to search icons.
@@ -278,6 +350,8 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
     document.body,
   );
 }
+
+const NO_MATCHES: readonly RackEquipmentMatch[] = [];
 
 /** Click-pick callback shape that ignores the click while `busy` is true.
  *  Stable identity per render keeps IconResultCard's click handlers from

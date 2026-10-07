@@ -17,10 +17,15 @@ export function connectorLayer(c: Pick<Connector, 'layer'>): Layer {
 }
 
 export function shapeVisibleInMode(
-  s: Pick<Shape, 'layer' | 'rackUnit'>,
+  s: Pick<Shape, 'layer' | 'rackUnit' | 'rackModule' | 'rackPort'>,
   mode: LayerMode,
 ): boolean {
-  return !s.rackUnit?.hidden && (mode === 'both' || s.layer === mode);
+  return (
+    !s.rackUnit?.hidden &&
+    !s.rackModule?.hidden &&
+    !s.rackPort?.hidden &&
+    (mode === 'both' || s.layer === mode)
+  );
 }
 
 /** Connectors carry their own layer AND need both bound endpoints visible:

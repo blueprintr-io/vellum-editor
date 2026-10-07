@@ -143,5 +143,7 @@ export { NOTATION_CATALOG, RELATIONSHIPS, notationShape } from './editor/notatio
 export type { Notation, NotationType, Callout } from './editor/notation/catalog';
 export { validateNotation } from './editor/notation/model';
 
-export { createRack, getRackUnits, rackHeightPatch, rackLayout, rackUnitBox, rackUnitCount, MAX_RACK_UNITS } from './editor/rack/model';
-export type { RackConfig, RackUnit } from './editor/rack/model';
+export { createRack, getRackUnits, getRackInterfaces, rackChildren, rackOwnerUnit, rackHeightPatch, rackLayout, rackUnitBox, rackUnitCount, rackUnitSpan, rackUnitDevicePatch, rackUnitMaxSpan, MAX_RACK_UNITS } from './editor/rack/model';
+export type { RackConfig, RackUnit, RackModule, RackPort } from './editor/rack/model';
+export { RACK_CATEGORIES, RACK_DEVICE_SPECS, RACK_MODULE_LABELS, rackDeviceSpec, rackUnitDevice } from './editor/rack/devices';
+export type { RackDeviceSpec, RackLabelSide, RackModuleType, PortKind } from './editor/rack/devices';

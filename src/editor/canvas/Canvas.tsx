@@ -1,4 +1,5 @@
 import { RackUnitDragOverlay, type RackUnitDragPreview } from '@/editor/rack/RackUnitDragOverlay';
+import { isRackChild, rackCopyableIds, rackOwnerUnit, rackUnitPlacedSpan, swapRackUnitPositions } from '@/editor/rack/model';
 import { basicShapeFromDrop } from '@/editor/shapes/catalog';
 import { closedFreeformGeometry } from '@/editor/shapes/freeform';
 import { hiddenByCollapsedAncestor } from '@/editor/notation/model';
@@ -138,7 +139,15 @@ import { useReducedMotion } from '@/editor/useReducedMotion';
  *  useState so React can repaint *just* the overlay. */
 type Interaction =
   | { kind: 'idle' }
-  | { kind: 'rack-unit-drag'; sourceId: string; pointerStart: Pt; moved: boolean }
+  | {
+      kind: 'rack-unit-drag';
+      sourceId: string;
+      pointerStart: Pt;
+      moved: boolean;
+      /** The move planned for the U under the pointer, kept until the
+       *  pointer reaches a different U. */
+      plan?: Pick<RackUnitDragPreview, 'targetId' | 'fits' | 'landing'>;
+    }
   | { kind: 'creating-shape'; toolName: string; start: Pt; current: Pt }
   | {
       kind: 'creating-connector';
@@ -840,6 +849,10 @@ export function Canvas() {
       ) {
         return;
       }
+      // Hosts mount the canvas without the keymap (and its read-only gate),
+      // so a read-only canvas declines Cmd+V here, before any branch below
+      // writes the clipboard or adds a shape.
+      if (useEditor.getState().readOnly) return;
       // Compute paste origin: prefer the last cursor position over the
       // canvas; otherwise fall back to the viewport centre.
       const rect = svgRef.current?.getBoundingClientRect();
@@ -1011,7 +1024,7 @@ export function Canvas() {
       // envelope and the children never make it to the new diagram.
       const all = s.diagram.shapes;
       const allConns = s.diagram.connectors;
-      const expanded = expandAllDescendants(ids, all);
+      const expanded = rackCopyableIds(expandAllDescendants(ids, all), all);
       const shapes = all.filter((sh) => expanded.has(sh.id));
       // Mirror copySelection exactly - this envelope WINS over the internal
       // clipboard on paste, so anything it drops is lost:
@@ -1068,7 +1081,9 @@ export function Canvas() {
     };
 
     const onCut = (e: ClipboardEvent) => {
-      if (isFormTarget(e.target)) return;
+      // Cut is an edit: a read-only canvas declines it outright rather than
+      // degrading to a copy, and the browser default applies.
+      if (isFormTarget(e.target) || useEditor.getState().readOnly) return;
       const env = buildEnvelope();
       if (!env) return;
       useEditor.getState().cutSelection();
@@ -1270,6 +1285,14 @@ export function Canvas() {
 
   const visibleIds = useMemo(
     () => new Set(visibleShapes.map((s) => s.id)),
+    [visibleShapes],
+  );
+
+  // A marquee takes whole shapes. A rack's modules and interfaces are parts
+  // of its equipment - selected by clicking one - so a marquee over a rack
+  // doesn't light up every port inside it.
+  const marqueeShapes = useMemo(
+    () => visibleShapes.filter((s) => !isRackChild(s)),
     [visibleShapes],
   );
 
@@ -2186,7 +2209,7 @@ export function Canvas() {
       // zoomed out. 6 world units at 1x = a 12x12 click target.
       const r = 6 / zoom;
       for (const sh of selectedShapes) {
-        if (sh.rackUnit) continue;
+        if (sh.rackUnit || isRackChild(sh)) continue;
         const rot = ((sh.rotation ?? 0) * Math.PI) / 180;
         const cos = Math.cos(rot);
         const sin = Math.sin(rot);
@@ -2251,7 +2274,7 @@ export function Canvas() {
     (p: Pt): { id: string } | null => {
       const r = 7 / zoom; // slightly larger target than corner handles
       for (const sh of selectedShapes) {
-        if (sh.rackUnit || !shapeSupportsRotation(sh)) continue;
+        if (sh.rackUnit || isRackChild(sh) || !shapeSupportsRotation(sh)) continue;
         if (
           sh.kind === 'icon' &&
           sh.iconConstraints?.lockRotation === true
@@ -3658,12 +3681,15 @@ export function Canvas() {
           // on top, so the user wanting to grab the line behind it would be
           // surprising. Fall through to the shape branch below.
         }
-        if (shapeHit?.rackUnit) {
+        if (shapeHit?.rackUnit || (shapeHit && isRackChild(shapeHit))) {
           if (additive) { toggleSelected(shapeHit.id); return; }
           setSelected(shapeHit.id);
-          if (!useEditor.getState().readOnly) {
+          // A module or interface selects itself; dragging it moves the
+          // equipment it belongs to.
+          const unit = shapeHit.rackUnit ? shapeHit : rackOwnerUnit(rawShapes, shapeHit);
+          if (!useEditor.getState().readOnly && unit) {
             setRackDragPreview(null);
-            setInteraction({kind:'rack-unit-drag',sourceId:shapeHit.id,pointerStart:world,moved:false});
+            setInteraction({kind:'rack-unit-drag',sourceId:unit.id,pointerStart:world,moved:false});
             e.currentTarget.setPointerCapture(e.pointerId);
             pointerDownRef.current = e.pointerId;
           }
@@ -4215,7 +4241,22 @@ export function Canvas() {
         if (!cur.moved && Math.hypot(world.x-cur.pointerStart.x,world.y-cur.pointerStart.y)*zoom < DRAG_THRESHOLD) return;
         cur.moved = true;
         const target = rackUnitTarget(world);
-        setRackDragPreview({sourceId:cur.sourceId,targetId:target && target.id !== cur.sourceId ? target.id : null,point:world});
+        const targetId = target && target.id !== cur.sourceId ? target.id : null;
+        if (!cur.plan || cur.plan.targetId !== targetId) {
+          const { diagram } = useEditor.getState();
+          const next = targetId
+            ? swapRackUnitPositions(diagram.shapes, cur.sourceId, targetId, diagram.connectors)
+            : diagram.shapes;
+          const landed = next !== diagram.shapes ? next.find(s => s.id === cur.sourceId) : undefined;
+          cur.plan = {
+            targetId,
+            fits: !targetId || !!landed,
+            landing: landed?.rackUnit && landed.parent
+              ? { box: { x: landed.x, y: landed.y, w: landed.w, h: landed.h, rotation: landed.rotation ?? 0 }, u: landed.rackUnit.u, span: rackUnitPlacedSpan(next, landed.id), rackId: landed.parent }
+              : undefined,
+          };
+        }
+        setRackDragPreview({sourceId:cur.sourceId,point:world,...cur.plan});
         return;
       }
 
@@ -5594,7 +5635,7 @@ export function Canvas() {
           w: world.x - cur.start.x,
           h: world.y - cur.start.y,
         });
-        const liveShapeIds = shapesInMarquee(liveRect, visibleShapes);
+        const liveShapeIds = shapesInMarquee(liveRect, marqueeShapes);
         const liveConnectorIds = connectorsInMarquee(
           liveRect,
           visibleConnectors,
@@ -6725,7 +6766,7 @@ export function Canvas() {
         // Recompute on commit. We could trust the live preview's candidate
         // lists, but recomputing keeps the up-handler self-sufficient if some
         // future code path skips a setPreview frame.
-        let shapeIds = shapesInMarquee(rect, visibleShapes);
+        let shapeIds = shapesInMarquee(rect, marqueeShapes);
         // While inside a focused group, marqueeing CAN'T select the group
         // itself - the user is operating inside that scope, and a marquee
         // that engulfs the group should yield "all the children",
@@ -7447,7 +7488,7 @@ export function Canvas() {
       // there. If it's something else, fall through to the existing
       // label/cell edit logic.
       const shapeHit = shapeUnder(world);
-      if (shapeHit && (shapeHit.kind === 'rack' || shapeHit.rackUnit)) {
+      if (shapeHit && (shapeHit.kind === 'rack' || shapeHit.rackUnit || isRackChild(shapeHit))) {
         useEditor.getState().setSelected(shapeHit.id);
         window.dispatchEvent(new CustomEvent('vellum:edit-shape', { detail: { id: shapeHit.id } }));
         return;
@@ -7862,8 +7903,9 @@ export function Canvas() {
           // the effective z, so a frame raised in front of an outsider
           // still paints behind its own contents. Groups are excluded here:
           // their bodies render first, outside the z pass (see above).
+          // A rack unit draws its equipment's modules and interfaces itself.
           const items = orderByZ(
-            visibleShapes.filter((s) => s.kind !== 'group'),
+            visibleShapes.filter((s) => s.kind !== 'group' && !isRackChild(s)),
             visibleConnectors,
             effZ,
           );
@@ -8738,7 +8780,7 @@ function SelectionOverlay({
   // VENDOR_CONSTRAINTS in src/icons/resolve.ts now allows rotation - so an
   // icon's lockRotation is only true if a future vendor pack opts back in.
   const showRotateHandle =
-    !shape.rackUnit && shapeSupportsRotation(shape) &&
+    !shape.rackUnit && !isRackChild(shape) && shapeSupportsRotation(shape) &&
     !(shape.kind === 'icon' && shape.iconConstraints?.lockRotation === true);
   // The selection halo + handles rotate WITH the shape so the user sees a
   // box that matches the rendered orientation. We render every position in
@@ -8789,7 +8831,7 @@ function SelectionOverlay({
         strokeDasharray={`${4 / zoom} ${3 / zoom}`}
         rx={4 / zoom}
       />
-      {!shape.rackUnit && corners.map(({ h: kind, cx, cy }) => (
+      {!shape.rackUnit && !isRackChild(shape) && corners.map(({ h: kind, cx, cy }) => (
         <rect
           key={kind}
           x={cx - handleSize / 2}
@@ -8802,7 +8844,7 @@ function SelectionOverlay({
           style={{ cursor: cursorForHandle(kind, shape.w, shape.h) }}
         />
       ))}
-      {!shape.rackUnit && edges.map(({ h: kind, cx, cy }) => {
+      {!shape.rackUnit && !isRackChild(shape) && edges.map(({ h: kind, cx, cy }) => {
         // Text shapes use vertical bars for east/west resize handles.
         // Their height is about 60% of the bbox, indicating that horizontal
         // dragging changes the text's wrap width.

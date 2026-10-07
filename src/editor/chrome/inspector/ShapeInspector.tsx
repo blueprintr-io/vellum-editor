@@ -1,7 +1,8 @@
 import { RackInspector } from '@/editor/rack/RackInspector';
 import { notationDefinition, notationShape } from '@/editor/notation/catalog';
 import { NotationInspector, CalloutInspector } from '@/editor/notation/NotationInspector';
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { isRackChild } from '@/editor/rack/model';
 import { useEditor } from '@/store/editor';
 import { type Layer, type Shape } from '@/store/types';
 import { isMonochromeSvg } from '@/icons/recolorable';
@@ -183,7 +184,8 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
   );
   const alreadyInContainer = parent?.kind === 'container';
 
-  const showBody = BODY_BEARING_KINDS.has(shape.kind) && !shape.notation && !shape.rackUnit;
+  const rackPart = isRackChild(shape);
+  const showBody = BODY_BEARING_KINDS.has(shape.kind) && !shape.notation && !shape.rackUnit && !rackPart;
   // Basic geometric primitives - Shape.tsx never paints their `label`, but
   // the field is preserved on the shape (used as a morph-animation key /
   // "podium" identifier). The text input stays in the LABEL section so users
@@ -198,7 +200,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
   // content. Hide the LABEL section to avoid a phantom field that wouldn't
   // paint anywhere; the table's own header / cell anchors live in the
   // dedicated TABLE section below.
-  const showLabel = shape.kind !== 'table' && shape.kind !== 'rack' && !shape.rackUnit && !shape.notation;
+  const showLabel = shape.kind !== 'table' && shape.kind !== 'rack' && !shape.rackUnit && !rackPart && !shape.notation;
 
   // Header preview: the shape's label IS the content for a text shape,
   // so a pasted paragraph used to render here as a wall of text and push the
@@ -215,6 +217,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
 
   return (
     <div className={INSPECTOR_PANEL_CLASS}>
+      <HiddenSections.Provider value={rackPart ? RACK_PART_HIDDEN : NO_HIDDEN}>
       <div className="px-[14px] py-[10px] border-b border-border flex items-center justify-between gap-2">
         <div
           className="text-[12px] font-semibold flex items-center gap-2 min-w-0"
@@ -244,7 +247,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
            *  bump the point count without leaving the inspector. They edit
            *  `smartAnchorCount`, defaulting to 8 when the field is unset
            *  (the legacy layout). */}
-          {shape.kind !== 'freehand' && (
+          {shape.kind !== 'freehand' && !rackPart && (
             <>
               {(shape.smartAnchor ?? smartAnchorsGlobal) && (
                 <SmartAnchorCountControls
@@ -275,7 +278,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
             </>
           )}
           <span className="ml-1 font-mono text-[9px] text-fg-muted px-[6px] py-[2px] bg-bg-emphasis rounded-[3px]">
-            {shape.notation ? notationDefinition(shape.notation.type)?.family : shape.rackUnit ? 'rack unit' : shape.kind}
+            {shape.notation ? notationDefinition(shape.notation.type)?.family : shape.rackPort ? 'interface' : shape.rackModule ? 'module' : shape.rackUnit ? 'rack unit' : shape.kind}
           </span>
         </div>
       </div>
@@ -297,7 +300,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
        *  Container & connector inspectors read from this same module; the
        *  re-ordering only moves the JSX slots - nothing about the shape
        *  schema or update calls changed. */}
-      {shape.kind === 'image' ? (
+      {rackPart ? null : shape.kind === 'image' ? (
         <Section title="APPEARANCE">
           <Field label=".filter">
             <div className="seg">
@@ -445,7 +448,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
           {(shape.kind === 'rect' ||
             shape.kind === 'service' ||
             shape.kind === 'container') &&
-            shape.layer !== 'notes' && !shape.notation && !shape.rackUnit && (
+            shape.layer !== 'notes' && !shape.notation && !shape.rackUnit && !rackPart && (
               <Field label=".roundness">
                 <CornerRadiusField
                   value={shape.cornerRadius}
@@ -665,7 +668,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
       {/* Icons render "Make container" inline in their ICON section (next
        *  to the frame control). Keep GROUPING for the other containerisable
        *  kinds (image / service) only, so icons don't show it twice. */}
-      {!shape.rackUnit && CONTAINERISABLE_KINDS.has(shape.kind) &&
+      {!shape.rackUnit && !rackPart && CONTAINERISABLE_KINDS.has(shape.kind) &&
         shape.kind !== 'icon' &&
         !alreadyInContainer && (
         <Section title="GROUPING">
@@ -693,10 +696,19 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
        *  field on the shape, plus the numeric bbox that has no other entry
        *  point. See AdvancedSection for why it is outside the curated
        *  sections. */}
-      {!shape.rackUnit && <AdvancedSection shape={shape} />}
+      {!shape.rackUnit && !rackPart && <AdvancedSection shape={shape} />}
+      </HiddenSections.Provider>
     </div>
   );
 }
+
+/** Sections a shape can't use, suppressed by title. A rack unit's modules
+ *  and interfaces follow their rack's layer, so they get no LAYER section;
+ *  that section's own condition is left alone because embedders patch
+ *  their own rows in beside it. */
+const NO_HIDDEN: ReadonlySet<string> = new Set();
+const RACK_PART_HIDDEN: ReadonlySet<string> = new Set(['LAYER']);
+const HiddenSections = createContext<ReadonlySet<string>>(NO_HIDDEN);
 
 /** ShapeInspector packs many sections vertically - uses the compact
  *  variant of the shared Section so the panel doesn't run off the bottom
@@ -710,6 +722,8 @@ function Section({
   title: string;
   children: React.ReactNode;
 }) {
+  const hidden = useContext(HiddenSections);
+  if (hidden.has(title)) return null;
   return (
     <SharedSection
       title={title}

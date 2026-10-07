@@ -7,6 +7,8 @@ import { LibraryShapeTile } from './LibraryShapeTile';
 import { Dashboard } from './Dashboard';
 import { IconPacksBrowser } from './IconPacksBrowser';
 import { IconSearchResults } from './icons/IconSearchResults';
+import { FuzzyIndex } from '@/lib/fuzzy-search';
+import { rackSearchTerms } from '@/editor/rack/search';
 import { I } from './icons';
 
 /** The sidebar and quick picker share navigation, search and drag payloads. */
@@ -52,14 +54,11 @@ export function LibraryBrowser({
   ];
   const query = q.trim().toLowerCase();
   const lib = libraries.find((l) => l.id === category);
-  const shapes = (query ? libraries : lib ? [lib] : [])
-    .flatMap((l) => l.shapes.map((s) => ({ ...s, lib: l })))
-    .filter((s) => s.label.toLowerCase().includes(query));
-  const basics = query
-    ? BASIC_SHAPES.filter((s) => s.label.toLowerCase().includes(query))
-    : category === 'basic'
-      ? BASIC_SHAPES
-      : [];
+  const found = query ? searchShapes(query, libraries) : null;
+  const shapes = found
+    ? found.shapes
+    : (lib ? [lib] : []).flatMap((l) => l.shapes.map((s) => ({ ...s, lib: l })));
+  const basics = found ? found.basics : category === 'basic' ? BASIC_SHAPES : [];
   const grid = cols === 3 ? 'grid grid-cols-3 gap-1' : 'grid grid-cols-4 gap-1';
   return (
     <>
@@ -227,4 +226,29 @@ function CategoryRow({
       </span>
     </button>
   );
+}
+
+/** Every library's shapes and the basic shapes matching `query`, best
+ *  first. Forgiving like the icon search: "fw" finds the rack firewall,
+ *  "elipse" the ellipse; a shape's library name counts too, so "rack"
+ *  lists the rack library. */
+function searchShapes(query: string, libraries: readonly Library[]) {
+  const shapes = libraries.flatMap((l) => l.shapes.map((s) => ({ ...s, lib: l })));
+  const index = new FuzzyIndex([
+    ...BASIC_SHAPES.map((b) => ({ name: b.label, context: ['Basic shapes'] })),
+    ...shapes.map((s) => ({
+      name: s.label,
+      keywords: s.lib.id === 'racks' && s.id.startsWith('rack-') ? rackSearchTerms(s.id.slice(5)) : [],
+      context: [s.lib.name],
+    })),
+  ]);
+  let hits = index.search(query);
+  if (hits.some((h) => !h.missing)) hits = hits.filter((h) => !h.missing);
+  const basics: (typeof BASIC_SHAPES)[number][] = [];
+  const found: typeof shapes = [];
+  for (const { index: i } of hits) {
+    if (i < BASIC_SHAPES.length) basics.push(BASIC_SHAPES[i]);
+    else found.push(shapes[i - BASIC_SHAPES.length]);
+  }
+  return { basics, shapes: found };
 }

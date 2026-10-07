@@ -1,6 +1,7 @@
 import { fragmentBounds, remapFragment } from '@/store/fragments';
-import { createRack } from '@/editor/rack/model';
+import { createRack, isRackChild, rackChildDefaultLabel, rackOwnerUnit, rackUnitIconPatch } from '@/editor/rack/model';
 import { RACK_PRESETS, RACK_EQUIPMENT } from '@/editor/rack/catalog';
+import { rackDeviceSpec } from '@/editor/rack/devices';
 import { pickShapeAt } from '@/editor/canvas/pick';
 import { effectiveZMap } from '@/editor/canvas/z-order';
 import { shapeVisibleInMode } from '@/store/layers';
@@ -115,8 +116,9 @@ export function insertLibraryShape(
       editor.setInspectorOpen(true);
     } else if (equipment) {
       const unit = rackUnitTarget(at);
-      if (unit) editor.updateShape(unit.id,{iconSvg:equipment.svg,iconAttribution:undefined,iconConstraints:undefined,label:unit.label===`U${unit.rackUnit!.u}`?equipment.label:unit.label});
-      else editor.addShape({id:newId('equipment'),kind:'icon',...placeAt(p,160,24),w:160,h:24,layer:editor.activeLayer,iconSvg:equipment.svg,label:equipment.label});
+      const tall = 24 * (rackDeviceSpec(equipment.device)?.span ?? 1);
+      if (unit) editor.setRackUnitDevice(unit.id,equipment.device);
+      else editor.addShape({id:newId('equipment'),kind:'icon',...placeAt(p,160,tall),w:160,h:tall,layer:editor.activeLayer,iconSvg:equipment.svg,label:equipment.label});
     }
     editor.recordRecent({key:`library:${lib.id}`,label:lib.label,glyph:lib.glyph,source:{kind:'library',libShapeId:lib.id,libName:lib.libName}});
     return;
@@ -184,13 +186,14 @@ export async function insertIconShape(
 ): Promise<void> {
   const native = payload.vendor === 'flowchart' ? notationDefinition(payload.iconId.replace('flowchart/', 'flow-')) : undefined;
   if (native) { insertLibraryShape({id:native.id,label:native.label,glyph:'',libName:'Flowchart'}, at); return; }
-  const targetId = rackUnitTarget(at)?.id;
+  const targetId = rackUnitTarget(at, [], true)?.id;
   const resolved = await resolveIcon(payload);
   if (targetId) {
     const editor = useEditor.getState();
-    const unit = editor.diagram.shapes.find(s=>s.id===targetId && s.rackUnit);
+    const unit = editor.diagram.shapes.find(s=>s.id===targetId && (s.rackUnit || s.rackModule));
     if (!unit) return;
-    editor.updateShape(unit.id,{iconSvg:resolved.svg,iconAttribution:resolved.attribution,iconConstraints:resolved.constraints});
+    const placeholder = unit.rackModule ? unit.label === rackChildDefaultLabel(editor.diagram.shapes, unit) : undefined;
+    editor.updateShape(unit.id,rackUnitIconPatch(unit,{iconSvg:resolved.svg,iconAttribution:resolved.attribution,iconConstraints:resolved.constraints},undefined,placeholder));
     editor.setSelected(unit.id);
     return;
   }
@@ -350,16 +353,28 @@ export function insertBundle(
 }
 
 /** Resolve the destination before any async icon fetch, so a later selection
- * change cannot put the equipment in a different U. */
-export function rackUnitTarget(at?: { x: number; y: number }, ignoreIds: readonly string[] = []): Shape | undefined {
+ * change cannot put the equipment in a different U. A port or module under
+ * the pointer stands for the U it belongs to - except a shelf item, which
+ * takes an icon of its own when `items` is set. */
+export function rackUnitTarget(at?: { x: number; y: number }, ignoreIds: readonly string[] = [], items = false): Shape | undefined {
   const s = useEditor.getState();
   const byId = new Map(s.diagram.shapes.map(sh => [sh.id, sh]));
   const visible = s.diagram.shapes.filter(sh =>
     !ignoreIds.includes(sh.id) && shapeVisibleInMode(sh, s.layerMode) && !hiddenByCollapsedAncestor(sh, byId));
+  const resolve = (hit: Shape | undefined | null): Shape | undefined => {
+    if (!hit) return undefined;
+    if (hit.rackUnit) return hit;
+    if (!isRackChild(hit)) return undefined;
+    if (items) {
+      const item = hit.rackModule ? hit : byId.get(hit.parent ?? '');
+      if (item?.rackModule && byId.get(item.parent ?? '')?.rackUnit?.device === 'shelf') return item;
+    }
+    const unit = rackOwnerUnit(s.diagram.shapes, hit);
+    return unit && visible.includes(unit) ? unit : undefined;
+  };
   if (!at) return s.selectedIds.length === 1
-    ? visible.find(sh => sh.id === s.selectedIds[0] && sh.rackUnit)
+    ? resolve(visible.find(sh => sh.id === s.selectedIds[0]))
     : undefined;
-  const hit = pickShapeAt(at, visible,
-    effectiveZMap(s.diagram.shapes, s.diagram.connectors), { bypassGroup: true });
-  return hit?.rackUnit ? hit : undefined;
+  return resolve(pickShapeAt(at, visible,
+    effectiveZMap(s.diagram.shapes, s.diagram.connectors), { bypassGroup: true }));
 }

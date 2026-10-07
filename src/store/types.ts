@@ -1,5 +1,5 @@
 import type { ShapePreset } from '@/editor/shapes/catalog';
-import type { RackConfig, RackUnit } from '@/editor/rack/model';
+import type { RackConfig, RackModule, RackPort, RackUnit } from '@/editor/rack/model';
 import type { Notation, Callout } from '@/editor/notation/catalog';
 /* Vellum types.
  *
@@ -224,6 +224,12 @@ export type Shape = {
   /** Rack frame and individually linkable U slot, respectively. */
   rack?: RackConfig;
   rackUnit?: RackUnit;
+  /** A card, blade, node, controller or shelf item in a rack unit's
+   *  equipment - a child of that unit. */
+  rackModule?: RackModule;
+  /** One interface (port, NIC, outlet…) of a rack unit's equipment or of
+   *  one of its modules - a child of either. */
+  rackPort?: RackPort;
   /** Native UML/BPMN/flowchart geometry and editable notation options. */
   notation?: Notation;
   /** Parametric callout tail, in world units and edge fractions. */

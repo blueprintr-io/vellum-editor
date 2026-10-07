@@ -1,5 +1,6 @@
 import { SHAPE_PRESETS } from '@/editor/shapes/catalog';
 import { syncRacks, MAX_RACK_UNITS } from '@/editor/rack/model';
+import { RACK_DEVICE_TYPES, RACK_LABEL_SIDES, RACK_MODULE_TYPES } from '@/editor/rack/devices';
 import { NOTATION_TYPES, EVENT_DEFINITIONS, TASK_TYPES } from '@/editor/notation/catalog';
 /* Runtime schema for diagram-shaped foreign data.
  *
@@ -162,7 +163,27 @@ const Layer = z.union([z.literal('notes'), z.literal('blueprint')]);
  *  carry security-relevant content. */
 const ShapeSchema = z.looseObject({
   rack: z.looseObject({units:z.number().int().min(1).max(MAX_RACK_UNITS), numbering:z.enum(['bottom-up','top-down']).optional()}).optional().catch(undefined),
-  rackUnit: z.looseObject({u:z.number().int().min(1).max(MAX_RACK_UNITS), hidden:z.boolean().optional()}).optional().catch(undefined),
+  rackUnit: z.looseObject({
+    u:z.number().int().min(1).max(MAX_RACK_UNITS), hidden:z.boolean().optional(),
+    // Equipment fields fall back one at a time: an unreadable option must
+    // not turn a cabled switch back into an empty slot. Option values are
+    // checked against the catalogue when read (rackDeviceOptions).
+    span:z.number().int().min(1).max(MAX_RACK_UNITS).optional().catch(undefined),
+    device:z.enum(RACK_DEVICE_TYPES as [string, ...string[]]).optional().catch(undefined),
+    options:z.record(z.string(), z.union([z.number(), z.string()])).optional().catch(undefined),
+    labelSide:z.enum(RACK_LABEL_SIDES).optional().catch(undefined),
+  }).optional().catch(undefined),
+  rackModule: z.looseObject({
+    slot:z.number().int().min(1).max(64),
+    type:z.enum(RACK_MODULE_TYPES).optional().catch(undefined),
+    hidden:z.boolean().optional().catch(undefined),
+  }).optional().catch(undefined),
+  rackPort: z.looseObject({
+    group:z.string().min(1).max(32), n:z.number().int().min(1).max(512),
+    kind:z.string().max(16).optional().catch(undefined),
+    side:z.enum(['top','bottom']).optional().catch(undefined),
+    hidden:z.boolean().optional().catch(undefined),
+  }).optional().catch(undefined),
   notation: z.object({
     adHoc:z.boolean().optional(), multiInstance:z.boolean().optional(),
     participantTop:z.string().optional(), participantBottom:z.string().optional(),

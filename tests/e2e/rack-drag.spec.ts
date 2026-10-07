@@ -40,15 +40,16 @@ async function seed(page: Page, zoom = 1) {
       label: 'Server rack',
       rack: { units: 16, numbering: 'top-down' },
     });
+    const art = (device: string) => RACK_EQUIPMENT.find((e) => e.device === device).svg;
     st.updateShape('a-u1', {
       label: 'Server',
-      iconSvg: RACK_EQUIPMENT[0].svg,
+      iconSvg: art('server'),
       meta: { stratumId: 'server-stratum' },
       fill: '#cceeff',
     });
     st.updateShape('a-u4', {
       label: 'Switch',
-      iconSvg: RACK_EQUIPMENT[1].svg,
+      iconSvg: art('switch'),
       meta: { stratumId: 'switch-stratum' },
     });
     st.addConnector({
@@ -148,10 +149,15 @@ for (const zoom of [1, 0.65])
     }
     await page.mouse.up();
     const moved = await state(page);
-    expect(moved.diagram.shapes).toHaveLength(30);
+    // Racks and U only; the equipment's interfaces are counted below.
+    expect(moved.diagram.shapes.filter((s) => !s.rackPort)).toHaveLength(30);
     expect(moved.diagram.shapes.map((s) => s.id).sort()).toEqual(
       before.diagram.shapes.map((s) => s.id).sort(),
     );
+    // The server's interfaces keep their ids and travel into the rotated rack.
+    const nics = moved.diagram.shapes.filter((s) => s.parent === 'a-u1' && s.rackPort);
+    expect(nics.map((s) => s.id).sort()).toEqual(['a-u1-bmc-1', 'a-u1-nic-1', 'a-u1-nic-2']);
+    expect(nics.every((s) => s.rotation === 15 && !s.rackPort.hidden)).toBe(true);
     const server = moved.diagram.shapes.find((s) => s.id === 'a-u1');
     expect(server).toMatchObject({
       parent: 'b',
@@ -241,9 +247,9 @@ test('read-only racks remain selectable without allowing swaps', async ({
 async function addLooseIcon(page: Page) {
   await page.evaluate(async () => {
     const {useEditor}=window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
-    const {RACK_EQUIPMENT}=window.__VELLUM_TEST__!.modules['/src/editor/rack/catalog.ts'];
     const st=useEditor.getState();
-    st.addShape({id:'loose',kind:'icon',x:90,y:160,w:80,h:80,layer:'blueprint',label:'Edge server',iconSvg:RACK_EQUIPMENT[0].svg,stroke:'#123456',meta:{serial:'123'},iconAttribution:{holder:'Test fixture',iconId:'test-server',license:'CC0-1.0',source:'iconify',sourceUrl:'https://example.test/server'}});
+    const iconSvg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+    st.addShape({id:'loose',kind:'icon',x:90,y:160,w:80,h:80,layer:'blueprint',label:'Edge server',iconSvg,stroke:'#123456',meta:{serial:'123'},iconAttribution:{holder:'Test fixture',iconId:'test-server',license:'CC0-1.0',source:'iconify',sourceUrl:'https://example.test/server'}});
     st.addConnector({id:'icon-wire',from:{shape:'loose',anchor:'right'},to:{x:200,y:600},routing:'straight',layer:'blueprint'});
     st.setSelected(null);
     useEditor.setState({inspectorOpen:false,dirty:false});

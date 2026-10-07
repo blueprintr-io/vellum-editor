@@ -56,7 +56,9 @@ export function effectiveZMap(
     if (sh.parent && !visiting.has(sh.id)) {
       visiting.add(sh.id);
       const p = byId(sh.parent);
-      if (p && (p.kind === 'container' || p.kind === 'rack')) {
+      // Equipment's modules and interfaces sit above their unit the way a
+      // rack's units sit above the rack, so a click on a port finds it.
+      if (p && (p.kind === 'container' || p.kind === 'rack' || p.rackUnit || p.rackModule)) {
         const floor = effShape(p) + CONTAINER_CHILD_Z_LIFT;
         if (floor > z) z = floor;
       }

@@ -215,7 +215,7 @@ export function InlineLabelEditor() {
   // keeps "the label of this container" separate from "the words inside this
   // box," which is the user's mental model.
   const writesToBody =
-    !!shape && !shape.rackUnit &&
+    !!shape && !shape.rackUnit && !shape.rackPort && !shape.rackModule &&
     (shape.kind === 'rect' ||
       shape.kind === 'ellipse' ||
       shape.kind === 'diamond' ||
@@ -594,7 +594,9 @@ export function InlineLabelEditor() {
   }
 
   // Native titles and callout text share the renderer's layout bounds.
-  const rackText = shape.kind === 'rack' || shape.rackUnit ? rackTextLayout(shape) : undefined;
+  const rackText = shape.kind === 'rack' || shape.rackUnit || shape.rackPort || shape.rackModule
+    ? rackTextLayout(shape, useEditor.getState().diagram.shapes.find((r) => r.id === shape.parent && r.kind === 'rack'))
+    : undefined;
   const nativeTitle = shape.notation ? notationTextRegions(shape).find(r=>r.role==='title') : undefined;
   const nativeBox = rackText ?? nativeTitle ?? (shape.polygonPreset === 'callout' && anchor === 'center' ? calloutTextBox(shape) : undefined);
   if (nativeBox) { worldX=nativeBox.x; worldY=nativeBox.y; worldW=nativeBox.w; worldH=nativeBox.h; }
@@ -703,7 +705,12 @@ export function InlineLabelEditor() {
 
   if (rackText) {
     textAlign = rackText.align;
-    alignItems = rackText.align === 'left' ? 'flex-start' : 'center';
+    alignItems =
+      rackText.align === 'left'
+        ? 'flex-start'
+        : rackText.align === 'right'
+          ? 'flex-end'
+          : 'center';
     justifyContent = 'center';
   }
 

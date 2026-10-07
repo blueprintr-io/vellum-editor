@@ -59,7 +59,11 @@ import { handleCopyPng, handleNew, handleOpen, handleSaveAs } from './files';
  *  (S, T, W, X, M, A, L, Q, N, 1-9) are additionally suppressed when focus is
  *  inside a dialog/menu portal - pressing 'S' on a focused dialog button
  *  used to toggle the library underneath. Modifier shortcuts (Cmd+S etc.)
- *  still fire from dialogs as expected. */
+ *  still fire from dialogs as expected.
+ *
+ *  While a host has the store `readOnly` (an embed, a preview), every
+ *  binding marked `edits` declines and its key falls through to the
+ *  browser. Selection, view, copy, save and open shortcuts keep working. */
 
 /** Returns true if the matched binding actually fired. False means the
  *  state precondition didn't hold (e.g. arrow key with no selection) and
@@ -79,6 +83,11 @@ type KeybindingDef = {
    *  false for BARE-KEY shortcuts, true for modifier shortcuts. Set
    *  explicitly to override. */
   allowInDialog?: boolean;
+  /** Changes the diagram. Declined while the store is `readOnly`, exactly
+   *  as if `run` had returned false: dispatch stops and the browser
+   *  default applies. The keymap has to gate these itself - most runs end
+   *  in store primitives (updateShape, undo) with no read-only check. */
+  edits?: boolean;
 };
 
 const m = (e: KeyboardEvent) => e.metaKey || e.ctrlKey;
@@ -149,6 +158,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     },
     allowInForm: true,
     allowInDialog: true,
+    edits: true,
   },
 
   // ─── Cmd+K palette ──────────────────────────────────────────────────────
@@ -182,6 +192,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       );
       return true;
     },
+    edits: true,
   },
   {
     id: 'delete-selection',
@@ -200,6 +211,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       st.deleteSelection();
       return true;
     },
+    edits: true,
   },
   {
     id: 'undo',
@@ -207,6 +219,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && !e.shiftKey && k(e) === 'z',
     run: ok(() => useEditor.getState().undo()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'redo-shift-z',
@@ -214,6 +227,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && e.shiftKey && k(e) === 'z',
     run: ok(() => useEditor.getState().redo()),
     allowInDialog: true,
+    edits: true,
   },
   // Some keyboards fire Cmd+Y for redo - accept it too.
   {
@@ -222,6 +236,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && k(e) === 'y',
     run: ok(() => useEditor.getState().redo()),
     allowInDialog: true,
+    edits: true,
   },
   // NOTE: Cmd+C / Cmd+X / Cmd+V are intentionally NOT in this table.
   // preventDefault would block the native clipboard event the Canvas
@@ -234,6 +249,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && !e.shiftKey && k(e) === 'd',
     run: ok(() => useEditor.getState().duplicateSelection()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'select-all',
@@ -292,6 +308,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       }
       return true;
     },
+    edits: true,
   },
 
   // ─── Z-order ────────────────────────────────────────────────────────────
@@ -302,6 +319,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && e.shiftKey && e.key === ']',
     run: ok(() => useEditor.getState().bringToFront()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'z-send-to-back',
@@ -309,18 +327,21 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && e.shiftKey && e.key === '[',
     run: ok(() => useEditor.getState().sendToBack()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'z-bring-forward',
     label: 'Bring forward',
     test: (e) => !m(e) && !e.shiftKey && e.key === ']',
     run: ok(() => useEditor.getState().bringForward()),
+    edits: true,
   },
   {
     id: 'z-send-backward',
     label: 'Send backward',
     test: (e) => !m(e) && !e.shiftKey && e.key === '[',
     run: ok(() => useEditor.getState().sendBackward()),
+    edits: true,
   },
 
   // ─── View ───────────────────────────────────────────────────────────────
@@ -364,6 +385,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       st.flipSelection('horizontal');
       return true;
     },
+    edits: true,
   },
   {
     id: 'flip-vertical',
@@ -375,6 +397,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       st.flipSelection('vertical');
       return true;
     },
+    edits: true,
   },
 
   // ─── Promote / group ────────────────────────────────────────────────────
@@ -384,6 +407,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && e.shiftKey && k(e) === 'p',
     run: ok(() => useEditor.getState().promoteSelection()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'group',
@@ -391,6 +415,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && !e.shiftKey && k(e) === 'g',
     run: ok(() => useEditor.getState().groupSelection()),
     allowInDialog: true,
+    edits: true,
   },
   {
     id: 'ungroup',
@@ -398,6 +423,7 @@ const BINDINGS: readonly KeybindingDef[] = [
     test: (e) => m(e) && e.shiftKey && k(e) === 'g',
     run: ok(() => useEditor.getState().ungroupSelection()),
     allowInDialog: true,
+    edits: true,
   },
 
   // ─── Connectors ─────────────────────────────────────────────────────────
@@ -415,6 +441,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       s.updateConnector(conn.id, { from: conn.to, to: conn.from });
       return true;
     },
+    edits: true,
   },
   {
     id: 'swap-connector',
@@ -429,6 +456,7 @@ const BINDINGS: readonly KeybindingDef[] = [
       s.updateConnector(conn.id, { from: conn.to, to: conn.from });
       return true;
     },
+    edits: true,
   },
 
   // ─── File ───────────────────────────────────────────────────────────────
@@ -472,12 +500,16 @@ const BINDINGS: readonly KeybindingDef[] = [
   // window"; Cmd+Shift+N is Incognito/Private. ⌥⌘N is the universally-
   // free fallback. On macOS Alt+letter emits a dead-key character
   // (Alt+N → "˜"), so we match on e.code rather than e.key.
+  // Counts as an edit: it blanks the diagram in one chord, and its confirm
+  // only fires when something is unsaved. Open isn't gated - it needs a
+  // file pick, and declining it would hand ⌘O to the browser instead.
   {
     id: 'new-diagram',
     label: 'New diagram',
     test: (e) => m(e) && e.altKey && e.code === 'KeyN',
     run: ok(() => handleNew()),
     allowInDialog: true,
+    edits: true,
   },
 
   // ─── Viewport ───────────────────────────────────────────────────────────
@@ -688,7 +720,9 @@ export function useKeybindings() {
         // matching the chord consumes the event from the dispatcher's
         // perspective. Only preventDefault if run returned true - that
         // lets state-guarded bindings (arrow keys with no selection,
-        // R with no connector) fall through to the browser default.
+        // R with no connector) fall through to the browser default. An
+        // editing chord on a read-only canvas falls through the same way.
+        if (binding.edits && useEditor.getState().readOnly) return;
         const fired = binding.run();
         if (fired) e.preventDefault();
         return;

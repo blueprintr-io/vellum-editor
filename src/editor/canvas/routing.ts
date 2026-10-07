@@ -1,4 +1,6 @@
 import { notationGeometry } from '@/editor/notation/geometry';
+import { rackUnitAnchorFractions, rackUnitContentBox } from '@/editor/rack/geometry';
+import { rackUnitDevice } from '@/editor/rack/devices';
 /* Connector routing - anchor resolution + path computation.
  *
  * RULE: connectors store no waypoints by default. Paths are computed every
@@ -164,6 +166,10 @@ function unmirroredShapeAnchorPoint(
   // end. Any of the three took the canvas down with a TypeError.
   const anchor = resolvedAnchorOrCentre(rawAnchor);
   const { x, y, w, h } = shape;
+  if (shape.rackUnit) {
+    const box = rackUnitContentBox(shape);
+    if (box) return rackUnitAnchorPoint(shape, box, anchor);
+  }
   if (shape.notation) {
     const fraction = Array.isArray(anchor) ? anchor : ({top:[.5,0],right:[1,.5],bottom:[.5,1],left:[0,.5]} as const)[anchor];
     if (shape.notation.type === 'uml-lifeline' && fraction[1]*h >= Math.min(50,h*.3)) return [x+w/2,y+fraction[1]*h];
@@ -287,6 +293,35 @@ function unmirroredShapeAnchorPoint(
   }
 }
 
+/** A rack unit's anchors live on what it draws - the device body, or the
+ *  icon beside its label - so a line meets the equipment, not the slot.
+ *  Fractions are of that box. An icon's silhouette, once rasterized, pulls
+ *  the point onto the glyph the same way a loose icon's does; it was
+ *  rendered into a square around the artwork, hence the square frame. */
+function rackUnitAnchorPoint(
+  shape: Shape,
+  box: { x: number; y: number; w: number; h: number },
+  anchor: ResolvedAnchor,
+): [number, number] {
+  const [fx, fy] = Array.isArray(anchor)
+    ? anchor
+    : ({ top: [0.5, 0], right: [1, 0.5], bottom: [0.5, 1], left: [0, 0.5] } as const)[anchor];
+  const px = box.x + fx * box.w;
+  const py = box.y + fy * box.h;
+  const sil = rackUnitDevice(shape)
+    ? null
+    : getIconSilhouette(shape.iconAttribution?.iconId);
+  if (!sil) return [px, py];
+  const side = Math.max(box.w, box.h);
+  const sx = box.x + box.w / 2 - side / 2;
+  const sy = box.y + box.h / 2 - side / 2;
+  const sfx = (px - sx) / side;
+  const sfy = (py - sy) / side;
+  if (silhouettePixelIsBoundary(sil, sfx, sfy)) return [px, py];
+  const hit = silhouetteRayHit(sil, sfx, sfy);
+  return hit ? [sx + hit.fx * side, sy + hit.fy * side] : [px, py];
+}
+
 /** `shapeAnchorPoint` lifted into WORLD space: the local anchor position
  *  rotated about the bbox centre by the shape's (visual) rotation. This is
  *  where the anchor dot is drawn and where a bound connector actually meets
@@ -402,7 +437,7 @@ export function nearest8Anchor(
   cursor: { x: number; y: number },
 ): ResolvedAnchor {
   const local = toShapeLocal(cursor, shape);
-  const candidates: ResolvedAnchor[] = [
+  const candidates: ResolvedAnchor[] = rackUnitAnchorFractions(shape) ?? [
     'top',
     'right',
     'bottom',
@@ -462,7 +497,10 @@ export function resolveEndpointPoint(
     // edge facing the other end. Values that are present but unrecognised
     // fall through to `resolvedAnchorOrCentre`.
     let anchor: Anchor = ep.anchor ?? 'auto';
-    if (anchor === 'auto') {
+    // An interface has one connection point - its cable side - and a cable
+    // keeps meeting it there when the face moves the port to another row.
+    if (sh.rackPort) anchor = [0.5, sh.rackPort.side === 'bottom' ? 1 : 0];
+    else if (anchor === 'auto') {
       const otherCenter = endpointCenter(other, shapes);
       // autoAnchor is rotation-aware internally - pass world-space center.
       if (!otherCenter) anchor = 'right';

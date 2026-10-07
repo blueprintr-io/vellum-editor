@@ -1,5 +1,6 @@
 import { captureFragment, fragmentBounds, remapFragment, type DiagramFragment } from './fragments';
-import { syncRacks, clearRackUnit, swapRackUnitPositions, assignRackUnitIcon } from '@/editor/rack/model';
+import { syncRacks, clearRackUnit, clearRackChild, isRackChild, swapRackUnitPositions, assignRackUnitIcon, rackUnitMaxSpan, rackUnitSpan, rackUnitSpanPatch, rackUnitDevicePatch, rackDeviceOptionPatch } from '@/editor/rack/model';
+import { rackDeviceSpec, type RackModuleType, type RackOptionValue } from '@/editor/rack/devices';
 import { syncBoundaryEvents, isBpmnActivity, hiddenByCollapsedAncestor } from '@/editor/notation/model';
 import { create } from 'zustand';
 import { persist, type PersistStorage } from 'zustand/middleware';
@@ -703,8 +704,32 @@ export type EditorState = {
     connectors: Connector[],
   ) => void;
   updateShape: (id: string, patch: Partial<Shape>) => void;
-  /** Swap two rack U positions, retaining each unit's identity and links. */
+  /** Move a rack unit onto another unit's position (a swap for equal
+   *  heights), retaining each unit's identity and links. No-op when the
+   *  move does not fit - see `swapRackUnitPositions`. */
   swapRackUnits: (sourceId: string, targetId: string) => void;
+  /** Make a rack unit `span` U tall. Refused (false) when a U it would
+   *  cover holds equipment, a label or connections, or when it would run
+   *  past the rack top. */
+  setRackUnitSpan: (unitId: string, span: number) => boolean;
+  /** Fit catalogue equipment (devices.ts `type`) to a rack unit, at its
+   *  catalogue height when the U above are free, else as tall as fits.
+   *  Options it shares with the previous equipment carry over. `choice`
+   *  names options and a height up front - the picker reads them from a
+   *  search like "48 port switch" or "2u server" - in the same undo step;
+   *  values the catalogue doesn't offer are ignored, and the height is
+   *  clamped to the room there is. */
+  setRackUnitDevice: (
+    unitId: string,
+    type: string,
+    choice?: { options?: Readonly<Record<string, RackOptionValue>>; span?: number },
+  ) => boolean;
+  /** Change one option of a unit's equipment. Interfaces and modules it no
+   *  longer has are hidden, keeping their cables and links. One undo step. */
+  setRackDeviceOption: (unitId: string, key: string, value: RackOptionValue) => boolean;
+  /** Change what a chassis slot, blade bay, node bay or shelf position
+   *  holds. The module keeps its id and label. */
+  setRackModuleType: (moduleId: string, type: RackModuleType) => boolean;
   /** Fill a U from a canvas icon. `live` folds the assignment into an active
    * drag; its caller must commitHistory at gesture end. */
   assignIconToRackUnit: (sourceId: string, targetId: string, live?: boolean) => boolean;
@@ -2878,12 +2903,61 @@ export const useEditor = create<EditorState>()(
             const unit = byId.get(id);
             return !unit || !shapeVisibleInMode(unit,state.layerMode) || hiddenByCollapsedAncestor(unit,byId);
           })) return;
-          const shapes = swapRackUnitPositions(state.diagram.shapes,sourceId,targetId);
+          const shapes = swapRackUnitPositions(state.diagram.shapes,sourceId,targetId,state.diagram.connectors);
           if (shapes === state.diagram.shapes) return;
           _snapshot();
           _mutate({shapes});
           _reconcileConnectorParents();
           get().setSelected(sourceId);
+        },
+        setRackUnitSpan: (unitId, span) => {
+          const state = get();
+          if (state.readOnly) return false;
+          const unit = state.diagram.shapes.find(s => s.id === unitId);
+          if (!unit?.rackUnit || unit.rackUnit.hidden || !Number.isFinite(span)) return false;
+          const n = Math.max(1, Math.round(span));
+          if (n === rackUnitSpan(unit)) return true;
+          if (n > rackUnitMaxSpan(state.diagram.shapes, unitId, state.diagram.connectors)) return false;
+          const patch = rackUnitSpanPatch(unit, n);
+          _snapshot();
+          _mutate({shapes: state.diagram.shapes.map(s => s.id === unitId ? {...s, ...patch} : s)});
+          _reconcileConnectorParents();
+          return true;
+        },
+        setRackUnitDevice: (unitId, type, choice) => {
+          const state = get();
+          const unit = state.diagram.shapes.find(s => s.id === unitId);
+          const spec = rackDeviceSpec(type);
+          if (state.readOnly || !unit?.rackUnit || unit.rackUnit.hidden || !spec) return false;
+          const wanted = choice?.span !== undefined && Number.isFinite(choice.span) ? Math.max(1, Math.round(choice.span)) : spec.span;
+          const span = Math.min(wanted, rackUnitMaxSpan(state.diagram.shapes, unitId, state.diagram.connectors));
+          let patch = rackUnitDevicePatch(unit, type, undefined, span);
+          for (const [key, value] of Object.entries(choice?.options ?? {})) {
+            const next = rackDeviceOptionPatch({...unit, ...patch}, key, value);
+            if (next) patch = {...patch, ...next};
+          }
+          _snapshot();
+          _mutate({shapes: state.diagram.shapes.map(s => s.id === unitId ? {...s, ...patch} : s)});
+          _reconcileConnectorParents();
+          return true;
+        },
+        setRackDeviceOption: (unitId, key, value) => {
+          const state = get();
+          const unit = state.diagram.shapes.find(s => s.id === unitId);
+          if (state.readOnly || !unit?.rackUnit) return false;
+          const patch = rackDeviceOptionPatch(unit, key, value);
+          if (!patch) return false;
+          _snapshot();
+          _mutate({shapes: state.diagram.shapes.map(s => s.id === unitId ? {...s, ...patch} : s)});
+          return true;
+        },
+        setRackModuleType: (moduleId, type) => {
+          const state = get();
+          const mod = state.diagram.shapes.find(s => s.id === moduleId);
+          if (state.readOnly || !mod?.rackModule || mod.rackModule.hidden || mod.rackModule.type === type) return false;
+          _snapshot();
+          _mutate({shapes: state.diagram.shapes.map(s => s.id === moduleId ? {...s, rackModule: {...mod.rackModule!, type}} : s)});
+          return true;
         },
         assignIconToRackUnit: (sourceId, targetId, live = false) => {
           const state = get();
@@ -3130,6 +3204,9 @@ export const useEditor = create<EditorState>()(
           _moveLayer(get().selectedIds, 'notes');
         },
         deleteSelection: () => {
+          // The keymap declines Delete on a read-only canvas, but Cut, the
+          // command palette and the context menu reach this without it.
+          if (get().readOnly) return;
           const ids = new Set(get().selectedIds);
           if (ids.size === 0) return;
           // Expand groups and containers to include their (recursive)
@@ -3140,9 +3217,12 @@ export const useEditor = create<EditorState>()(
           // the user wants to keep the children, Cmd+Shift+G ungroups first.
           const all = get().diagram.shapes;
           const expanded = expandAllDescendants(ids, all);
-          // Delete clears equipment in a U, retaining the independently linked slot.
-          const clearedUnits = new Set(all.filter(sh => sh.rackUnit && expanded.has(sh.id) && !expanded.has(sh.parent!)).map(sh => sh.id));
-          for (const id of clearedUnits) expanded.delete(id);
+          // Delete clears equipment in a U, retaining the independently linked
+          // slot - and its equipment's modules and interfaces, which keep their
+          // own links. Deleting a module or interface clears it in place.
+          const clearedUnits = new Set(all.filter(sh => (sh.rackUnit || isRackChild(sh)) && expanded.has(sh.id) && !expanded.has(sh.parent!)).map(sh => sh.id));
+          const retained = expandAllDescendants([...clearedUnits], all);
+          for (const id of retained) expanded.delete(id);
           _snapshot();
           // A connector parented to a deleted container is a child of that
           // frame and goes with it - same contract as the container's child
@@ -3158,7 +3238,7 @@ export const useEditor = create<EditorState>()(
           // - the user can reattach or delete it. Directly-selected
           // connectors are removed.
           _mutate({
-            shapes: all.filter((sh) => !expanded.has(sh.id)).map(sh => clearedUnits.has(sh.id) ? clearRackUnit(sh) : sh),
+            shapes: all.filter((sh) => !expanded.has(sh.id)).map(sh => !clearedUnits.has(sh.id) ? sh : sh.rackUnit ? clearRackUnit(sh) : clearRackChild(all, sh)),
             connectors: danglifyConnectors(
               get().diagram.connectors,
               expanded,
@@ -3392,7 +3472,7 @@ export const useEditor = create<EditorState>()(
           const ids = new Set(get().selectedIds);
           const allShapes = get().diagram.shapes;
           // U slots belong to their rack; group the frame instead.
-          for (const sh of allShapes) if (sh.rackUnit) ids.delete(sh.id);
+          for (const sh of allShapes) if (sh.rackUnit || isRackChild(sh)) ids.delete(sh.id);
           const members = allShapes.filter(
             (s) => ids.has(s.id) && s.kind !== 'group',
           );
@@ -4492,7 +4572,7 @@ export const useEditor = create<EditorState>()(
         // group children but leaves container children pinned.
         makeContainer: (id) => {
           const sh = get().diagram.shapes.find((s) => s.id === id);
-          if (!sh || sh.rackUnit) return;
+          if (!sh || sh.rackUnit || isRackChild(sh)) return;
           // Already containerised - no-op.
           if (sh.parent) {
             const parent = get().diagram.shapes.find((p) => p.id === sh.parent);
@@ -4630,7 +4710,7 @@ export const useEditor = create<EditorState>()(
 
         adoptIntoContainer: (id) => {
           const sh = get().diagram.shapes.find((s) => s.id === id);
-          if (!sh || sh.rackUnit) return;
+          if (!sh || sh.rackUnit || isRackChild(sh)) return;
           const all = get().diagram.shapes;
           if (sh.notation?.type === 'bpmn-boundary' && isBpmnActivity(all.find(s => s.id === sh.parent))) return;
           // Group membership is sticky - selecting a group child has its own

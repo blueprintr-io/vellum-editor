@@ -9,6 +9,7 @@
  * `wx*zoom + pan.x` since `pan` is already in screen pixels. */
 
 import { useEffect, useState } from 'react';
+import { rackUnitDevice } from '@/editor/rack/devices';
 import { useEditor } from '@/store/editor';
 import { ConnectorIconFlyout } from './ConnectorIconFlyout';
 
@@ -65,14 +66,20 @@ export function SelectionToolbar({ onStartClickConnector }: Props) {
   const cx = shape.x + shape.w / 2;
   const cy = shape.y + shape.h / 2;
   // Top-center offset (0, -h/2) in world, rotated around the shape center.
-  const anchorWX = shape.rackUnit ? cx + (shape.w / 2) * cos : cx + (shape.h / 2) * sin;
-  const anchorWY = shape.rackUnit ? cy + (shape.w / 2) * sin : cy - (shape.h / 2) * cos;
+  // A rack unit's toolbar sits beside the rack instead - on the left when
+  // its equipment label already floats on the right.
+  const side =
+    shape.rackUnit && rackUnitDevice(shape) && (shape.rackUnit.labelSide ?? 'right') === 'right'
+      ? -1
+      : 1;
+  const anchorWX = shape.rackUnit ? cx + side * (shape.w / 2) * cos : cx + (shape.h / 2) * sin;
+  const anchorWY = shape.rackUnit ? cy + side * (shape.w / 2) * sin : cy - (shape.h / 2) * cos;
   const anchorSX = anchorWX * zoom + pan.x;
   const anchorSY = anchorWY * zoom + pan.y;
   // Outward normal of the rotated top edge in SCREEN coords. Scaled to
   // TOP_EDGE_GAP so the offset stays constant across zoom levels.
-  const screenX = anchorSX + (shape.rackUnit ? cos * (TOP_EDGE_GAP + 24) : sin * TOP_EDGE_GAP);
-  const screenY = anchorSY + (shape.rackUnit ? sin * (TOP_EDGE_GAP + 24) : -cos * TOP_EDGE_GAP);
+  const screenX = anchorSX + (shape.rackUnit ? side * cos * (TOP_EDGE_GAP + 24) : sin * TOP_EDGE_GAP);
+  const screenY = anchorSY + (shape.rackUnit ? side * sin * (TOP_EDGE_GAP + 24) : -cos * TOP_EDGE_GAP);
 
   return (
     <>

@@ -1,5 +1,6 @@
 import type { Connector, ConnectorEndpoint, DiagramAssetEntry, DiagramState, Shape } from './types';
 import { expandAllDescendants } from './hierarchy';
+import { rackCopyableIds } from '../editor/rack/model';
 import { assetHashFromSrc, isAssetSrc } from '../lib/doc-assets';
 
 /** Shared payload for clipboard, duplication and personal libraries. Old
@@ -15,7 +16,7 @@ export function captureFragment(
   ids: ReadonlySet<string>,
   detach: (connector: Connector, selected: ReadonlySet<string>, shapes: readonly Shape[]) => Connector,
 ): DiagramFragment {
-  const expanded = expandAllDescendants(ids, diagram.shapes);
+  const expanded = rackCopyableIds(expandAllDescendants(ids, diagram.shapes), diagram.shapes);
   const shapes = diagram.shapes.filter(s => expanded.has(s.id));
   const connectors = diagram.connectors.filter(c =>
     ids.has(c.id) || (c.parent != null && expanded.has(c.parent)) ||

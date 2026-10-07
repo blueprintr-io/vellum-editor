@@ -13,6 +13,9 @@ import {
   syncRacks,
 } from '../src/editor/rack/model';
 import { RACK_EQUIPMENT } from '../src/editor/rack/catalog';
+import { isRackChild } from '../src/editor/rack/model';
+
+const EQ = (device: string) => RACK_EQUIPMENT.find((e) => e.device === device)!;
 import { parseDiagram } from '../src/store/schema';
 import { diagramToYaml, yamlToDiagram } from '../src/store/persist';
 import { pickShapeAt } from '../src/editor/canvas/pick';
@@ -150,7 +153,7 @@ test('resize, rotation and numbering preserve unit identities, metadata, and con
     ...shapes[1],
     label: 'Switch',
     meta: { integration: { stratumId: 'stratum-one' } },
-    iconSvg: RACK_EQUIPMENT[1].svg,
+    iconSvg: EQ('switch').svg,
   };
   const original = shapes[1];
   shapes = syncRacks(
@@ -186,7 +189,7 @@ test('reducing height retains upper equipment, IDs and links, and raising height
   st().addShapes(createRack('rack', 0, 0, 12));
   st().updateShape('rack-u12', {
     label: 'Backup',
-    iconSvg: RACK_EQUIPMENT[0].svg,
+    iconSvg: EQ('server').svg,
     meta: { stratumId: 's12' },
   });
   st().addConnector({
@@ -249,7 +252,7 @@ test('native rack insertion, U equipment changes and height changes have complet
     glyph: '',
     libName: 'Racks',
   });
-  assert.equal(st().diagram.shapes.length, 13);
+  assert.equal(st().diagram.shapes.filter((s) => !isRackChild(s)).length, 13);
   assert.ok(st().diagram.shapes.find((s) => s.id === u.id)?.iconSvg);
   st().undo();
   assert.equal(
@@ -302,7 +305,7 @@ test('Delete on a U clears its equipment while preserving identity and connector
   reset();
   st().addShapes(createRack('rack', 0, 0, 6));
   st().updateShape('rack-u1', {
-    iconSvg: RACK_EQUIPMENT[0].svg,
+    iconSvg: EQ('server').svg,
     label: 'Server',
     meta: { stratumId: 'one' },
   });
@@ -331,14 +334,15 @@ test('Delete on a U clears its equipment while preserving identity and connector
 test('copying just one U detaches an ordinary icon without creating stray rack slots', () => {
   reset();
   st().addShapes(createRack('rack', 0, 0, 6));
-  st().updateShape('rack-u1', { iconSvg: RACK_EQUIPMENT[0].svg });
+  st().updateShape('rack-u1', { iconSvg: EQ('server').svg });
   st().setSelected('rack-u1');
   st().duplicateSelection();
   const copy = st().diagram.shapes.find((s) => s.id === st().selectedIds[0])!;
   assert.equal(copy.parent, undefined);
   assert.equal(copy.rackUnit, undefined);
   assert.equal(copy.kind, 'icon');
-  assert.equal(st().diagram.shapes.length, 8);
+  assert.equal(st().diagram.shapes.filter((s) => !isRackChild(s)).length, 8);
+  assert.equal(st().diagram.shapes.filter((s) => isRackChild(s) && !s.parent?.startsWith('rack')).length, 0);
 });
 test('all equipment SVGs retain their paint and use independent instance IDs', () => {
   for (const e of RACK_EQUIPMENT) {
@@ -355,8 +359,8 @@ test('all equipment SVGs retain their paint and use independent instance IDs', (
 test('rack swaps move whole unit identities and commit one undo entry', () => {
   reset();
   st().addShapes(createRack('rack',0,0,12));
-  st().updateShape('rack-u1',{label:'Server',iconSvg:RACK_EQUIPMENT[0].svg,fill:'#00ff00',meta:{stratumId:'server-stratum'}});
-  st().updateShape('rack-u3',{label:'Switch',iconSvg:RACK_EQUIPMENT[1].svg,strokeWidth:3,meta:{stratumId:'switch-stratum'}});
+  st().updateShape('rack-u1',{label:'Server',iconSvg:EQ('server').svg,fill:'#00ff00',meta:{stratumId:'server-stratum'}});
+  st().updateShape('rack-u3',{label:'Switch',iconSvg:EQ('switch').svg,strokeWidth:3,meta:{stratumId:'switch-stratum'}});
   st().addConnector({id:'wire',from:{shape:'rack-u1',anchor:'right'},to:{shape:'rack-u3',anchor:'left'},routing:'straight'});
   st().setSelected('rack-u1');
   const before=structuredClone(st().diagram), history=st().past.length;
@@ -366,7 +370,7 @@ test('rack swaps move whole unit identities and commit one undo entry', () => {
   assert.equal(server.rackUnit!.u,3);
   assert.equal(network.rackUnit!.u,1);
   assert.equal(server.label,'Server');
-  assert.equal(server.iconSvg,RACK_EQUIPMENT[0].svg);
+  assert.equal(server.iconSvg,EQ('server').svg);
   assert.deepEqual(server.meta,{stratumId:'server-stratum'});
   assert.equal(server.fill,'#00ff00');
   assert.equal(network.strokeWidth,3);
@@ -385,7 +389,7 @@ test('cross-rack swaps preserve IDs, stratum metadata and equipment while adopti
   reset();
   st().addShapes([...createRack('a',30,40,8),...createRack('b',400,100,16)]);
   st().updateShape('b',{w:400,rotation:25,rack:{units:16,numbering:'top-down'},layer:'notes'});
-  st().updateShape('a-u2',{label:'Router',iconSvg:RACK_EQUIPMENT[1].svg,meta:{stratumId:'router'},iconAttribution:{holder:'Test fixture',iconId:'router',license:'CC0-1.0',source:'iconify',sourceUrl:'https://example.test/router'}});
+  st().updateShape('a-u2',{label:'Router',iconSvg:EQ('switch').svg,meta:{stratumId:'router'},iconAttribution:{holder:'Test fixture',iconId:'router',license:'CC0-1.0',source:'iconify',sourceUrl:'https://example.test/router'}});
   st().updateShape('b-u5',{meta:{stratumId:'reserved'}});
   const ids=st().diagram.shapes.map(s=>s.id).sort();
   st().swapRackUnits('a-u2','b-u5');
@@ -439,7 +443,7 @@ test('same-unit, unavailable-target and read-only swaps leave the diagram and hi
 
 const looseIcon = (): Shape => ({
   id:'loose',kind:'icon',x:400,y:100,w:80,h:80,layer:'blueprint',
-  iconSvg:RACK_EQUIPMENT[0].svg,label:'Edge server',body:'Serial 123',stroke:'#123456',
+  iconSvg:'<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/></svg>',label:'Edge server',body:'Serial 123',stroke:'#123456',
   meta:{serial:'123',stratumId:'icon-stratum'},
   iconAttribution:{holder:'Test fixture',iconId:'server',license:'CC0-1.0',source:'iconify',sourceUrl:'https://example.test/server'},
 });
@@ -447,7 +451,7 @@ const looseIcon = (): Shape => ({
 test('canvas icon assignment retains the U identity, artwork tint and both sets of connectors', () => {
   reset();
   st().addShapes([...createRack('rack',0,0,6),looseIcon()]);
-  st().updateShape('rack-u2',{label:'Old switch',iconSvg:RACK_EQUIPMENT[1].svg,fill:'#abcdef',stroke:'#999999',meta:{stratumId:'unit-stratum'}});
+  st().updateShape('rack-u2',{label:'Old switch',iconSvg:EQ('switch').svg,fill:'#abcdef',stroke:'#999999',meta:{stratumId:'unit-stratum'}});
   st().addConnector({id:'icon-wire',from:{shape:'loose',anchor:'right'},to:{shape:'rack-u1',anchor:'left'},routing:'straight'});
   st().addConnector({id:'unit-wire',from:{shape:'rack-u2',anchor:'right'},to:{shape:'loose',anchor:'left'},routing:'straight'});
   const before=structuredClone(st().diagram),depth=st().past.length;
