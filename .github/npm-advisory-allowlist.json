@@ -1,0 +1,21 @@
+{
+  "note": "Build-tool advisories reviewed by hand. Shipped dependencies are never allow-listed: scripts/check-npm-advisories.mjs fails on any advisory npm audit --omit=dev reports. Each entry expires so it is reviewed again; remove an entry once npm audit stops reporting it.",
+  "advisories": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "packages": ["braces"],
+      "severity": "high",
+      "reason": "Stack exhaustion on deeply nested brace patterns. braces is reached only through Tailwind CSS 3 build tooling (chokidar, micromatch, fast-glob), whose patterns come from tailwind.config.ts in this repository, never from users. Nothing from this chain ships in the app. No fixed braces release exists; the fix is Tailwind 4.",
+      "reviewed": "2026-10-08",
+      "expires": "2026-12-07"
+    },
+    {
+      "id": "GHSA-rj75-hqrm-r3gf",
+      "packages": ["postcss-selector-parser"],
+      "severity": "moderate",
+      "reason": "Quadratic parsing of flat selectors. Reached only through Tailwind CSS 3 (postcss-nested) at build time, on this repository's own CSS. Nothing from this chain ships in the app; the fix is Tailwind 4.",
+      "reviewed": "2026-10-08",
+      "expires": "2026-12-07"
+    }
+  ]
+}
