@@ -17,6 +17,7 @@ import {
 } from '@/editor/canvas/smart-anchors';
 import { I } from '../icons';
 import { AdvancedSection } from './AdvancedSection';
+import { InspectorIconAction } from './InspectorIconAction';
 import { FontPicker } from './FontPicker';
 import {
   CornerRadiusField,
@@ -41,6 +42,66 @@ import {
   CommitInput,
   CommitTextarea,
 } from './ui/InspectorRow';
+
+/** Shared outline picker for shapes and icon frames. Containers default to
+ *  dashed; other outlines default to solid, matching the canvas renderer. */
+function StrokeStyleField({
+  shape,
+  updateSelection,
+}: {
+  shape: Shape;
+  updateSelection: (patch: Partial<Shape>) => void;
+}) {
+  const effective =
+    shape.strokeStyle ?? (shape.kind === 'container' ? 'dashed' : 'solid');
+  return (
+    <Field label=".dash">
+      <div className="seg">
+        {(['solid', 'dashed', 'dotted'] as const).map((style) => (
+          <button
+            key={style}
+            type="button"
+            className={effective === style ? 'active' : ''}
+            onClick={() => updateSelection({ strokeStyle: style })}
+            aria-label={style}
+            aria-pressed={effective === style}
+            title={style}
+          >
+            <StrokeStyleIcon style={style} />
+          </button>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+/** Icons and pasted images share the same per-item frame operation. */
+function MediaFramePicker({ shape }: { shape: Shape }) {
+  const encapsulateSelection = useEditor((s) => s.encapsulateSelection);
+  return (
+    <div className="seg flex-1 min-w-0">
+      {(['none', 'circle', 'square'] as const).map((frame) => {
+        const active = frame === 'none' ? !shape.frame : shape.frame === frame;
+        const label = frame[0].toUpperCase() + frame.slice(1);
+        return (
+          <button
+            key={frame}
+            type="button"
+            className={active ? 'active' : ''}
+            onClick={() => encapsulateSelection(frame === 'none' ? null : frame)}
+            aria-label={label}
+            aria-pressed={active}
+            title={frame === 'none'
+              ? 'Remove the frame'
+              : `Encapsulate in a ${frame} (becomes the connector boundary)`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** `.prism` + `.prism fx` - the animated gradient outline.
  *
@@ -216,9 +277,10 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
       : headerSingleLine;
 
   return (
-    <div className={INSPECTOR_PANEL_CLASS}>
+    <div className={INSPECTOR_PANEL_CLASS} data-shape-inspector={shape.id}>
       <HiddenSections.Provider value={rackPart ? RACK_PART_HIDDEN : NO_HIDDEN}>
-      <div className="px-[14px] py-[10px] border-b border-border flex items-center justify-between gap-2">
+      <div className="sticky top-0 z-10 bg-bg">
+      <div className="min-h-[43px] px-[14px] py-[10px] border-b border-border flex items-center justify-between gap-2">
         <div
           className="text-[12px] font-semibold flex items-center gap-2 min-w-0"
           title={fullHeader}
@@ -282,6 +344,8 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
           </span>
         </div>
       </div>
+      <InspectorIconAction shape={shape} />
+      </div>
 
       <RackInspector key={`rack-${shape.id}`} shape={shape} />
       <NotationInspector key={shape.id} shape={shape} />
@@ -302,6 +366,33 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
        *  schema or update calls changed. */}
       {rackPart ? null : shape.kind === 'image' ? (
         <Section title="APPEARANCE">
+          <Field label=".frame">
+            <MediaFramePicker shape={shape} />
+          </Field>
+          {shape.frame && (
+            <>
+              <SwatchField
+                label=".fill"
+                kind="fill"
+                value={shape.fill}
+                onChange={(v) => updateSelection({ fill: v })}
+              />
+              <SwatchField
+                label=".stroke"
+                kind="stroke"
+                value={shape.stroke}
+                onChange={(v) => updateSelection({ stroke: v })}
+              />
+              <Field label=".line">
+                <StrokeWidthField
+                  value={shape.strokeWidth}
+                  onChange={(v) => updateSelection({ strokeWidth: v })}
+                />
+              </Field>
+              <StrokeStyleField shape={shape} updateSelection={updateSelection} />
+              <PrismFields shape={shape} updateSelection={updateSelection} />
+            </>
+          )}
           <Field label=".filter">
             <div className="seg">
               {(
@@ -407,35 +498,7 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
               onChange={(v) => updateSelection({ strokeWidth: v })}
             />
           </Field>
-          <Field label=".dash">
-            {/* Stroke style - same axis as the connector inspector. Container
-             *  shapes default to dashed (their identity); other kinds default
-             *  to solid. The displayed-active value mirrors the renderer's
-             *  default so flipping back to "default" looks right.
-             *
-             *  We always write a concrete strokeStyle (even when it matches
-             *  the kind default) so the user's choice survives through other
-             *  edits - without that, a click on "dashed" for a container
-             *  would no-op visually because it's already the default. */}
-            <div className="seg">
-              {(() => {
-                const containerDefault = shape.kind === 'container';
-                const effective =
-                  shape.strokeStyle ?? (containerDefault ? 'dashed' : 'solid');
-                return (['solid', 'dashed', 'dotted'] as const).map((s) => (
-                  <button
-                    key={s}
-                    className={effective === s ? 'active' : ''}
-                    onClick={() => updateSelection({ strokeStyle: s })}
-                    aria-label={s}
-                    title={s}
-                  >
-                    <StrokeStyleIcon style={s} />
-                  </button>
-                ));
-              })()}
-            </div>
-          </Field>
+          <StrokeStyleField shape={shape} updateSelection={updateSelection} />
           <PrismFields shape={shape} updateSelection={updateSelection} />
           {/* Corner radius - rect / service / container only at render time,
            *  and only the Blueprint layer honours it (Notes-layer rects use
@@ -684,10 +747,6 @@ export function ShapeInspector({ shape }: { shape: Shape }) {
             group them - they'll move together when you drag the container.
           </p>
         </Section>
-      )}
-
-      {shape.kind === 'container' && (
-        <ContainerIconSection shape={shape} />
       )}
 
       {shape.kind === 'table' && <TableSection shape={shape} />}
@@ -1079,16 +1138,6 @@ function AnchorGlyph({ cell, side }: { cell: Cell; side: 'inside' | 'outside' })
   );
 }
 
-/** ICON section inside a container's inspector. Two states:
- *    - container has an icon child → "Change icon" + open the picker flyout
- *      pinned to the button's screen position (same flyout used by the on-
- *      canvas double-click and "+" affordances).
- *    - container has no icon child → "Add icon" - same picker.
- *
- *  Was originally just an "Add icon" button that opened the LibraryPanel;
- *  funneling to the inline ContainerIconFlyout via the existing
- *  `vellum:open-icon-picker` event keeps the swap UX consistent across
- *  entry points (canvas dblclick, canvas +, inspector). */
 /** Table inspector section. Always renders structural controls (rows /
  *  cols / default cell anchor / header toggles). When `editingCell` points
  *  at this table, also renders a CELL sub-section: per-cell anchor (which
@@ -1344,69 +1393,6 @@ function CheckRow({
   );
 }
 
-function ContainerIconSection({ shape }: { shape: Shape }) {
-  // Look up whether there's actually an icon-kind child anchored to this
-  // container. `anchorId` is the explicit pin (newer containers); legacy
-  // diagrams fall back to "first child by parent". Either way we only count
-  // it as "has an icon" when the resolved child is `kind: 'icon'` -
-  // otherwise child containers / images / nested groups would falsely
-  // report "icon present" and flip the button label.
-  const hasIcon = useEditor((s) => {
-    if (shape.anchorId !== undefined) {
-      const a = s.diagram.shapes.find((sh) => sh.id === shape.anchorId);
-      // Strict: anchorId is the source of truth once stamped. If it's stale
-      // (anchored icon was deleted), report `false` so the inspector's
-      // button reads "Add icon" - matching what the user expects after
-      // deleting the anchor. Falling back to "any icon-by-parent" would
-      // mis-report "Change icon" while the actual icon picker (which keys
-      // off anchorId) would be in the ADD path, and the canvas label would
-      // render in the no-anchor slot. All three signals would disagree.
-      return !!(a && a.parent === shape.id && a.kind === 'icon');
-    }
-    // Legacy fallback for diagrams pre-anchorId.
-    return s.diagram.shapes.some(
-      (sh) => sh.parent === shape.id && sh.kind === 'icon',
-    );
-  });
-  const verb = hasIcon ? 'Change' : 'Add';
-  return (
-    <Section title="ICON">
-      <button
-        className="w-full inline-flex items-center justify-center gap-[6px] px-2 py-[6px] text-[11px] font-medium rounded-md bg-bg-subtle border border-border text-fg hover:bg-bg-emphasis"
-        onClick={(e) => {
-          // Pin the flyout to the inspector button's screen position. The
-          // canvas listens for `vellum:open-icon-picker` and opens the
-          // ContainerIconFlyout at the supplied (x, y). Reusing the
-          // event keeps the picker UI consistent across all three entry
-          // points (canvas dblclick, on-canvas "+" button, inspector).
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          window.dispatchEvent(
-            new CustomEvent('vellum:open-icon-picker', {
-              detail: {
-                containerId: shape.id,
-                x: r.left,
-                y: r.bottom,
-              },
-            }),
-          );
-        }}
-        title={
-          hasIcon
-            ? 'Swap this container’s anchored icon for another.'
-            : 'Pick an icon to anchor at this container’s top-left.'
-        }
-      >
-        <I.plusCircle /> {verb} icon
-      </button>
-      <p className="mt-2 text-[10px] leading-relaxed text-fg-muted">
-        {hasIcon
-          ? 'Swapping replaces the icon in place - geometry, connectors, and any per-shape tint stay put.'
-          : 'Containers can carry an optional anchor icon in the top-left.'}
-      </p>
-    </Section>
-  );
-}
-
 /** Icon-shape inspector body. Two stacked sections:
  *    - APPEARANCE - tint swatch, only shown for licence-permitted, actually
  *                   monochrome icons. Hidden for vendor (locked) and for
@@ -1433,7 +1419,6 @@ function IconBranch({
   // Subscribe via useManifest so the slider/tint appears the moment the
   // manifest resolves, even if the user selected the icon before then.
   const manifest = useManifest();
-  const encapsulateSelection = useEditor((s) => s.encapsulateSelection);
   const makeContainer = useEditor((s) => s.makeContainer);
   // An icon already pinned inside a container can't be wrapped again -
   // hide "Make container" in that case (mirrors the GROUPING gate, which
@@ -1525,6 +1510,7 @@ function IconBranch({
               value={shape.stroke}
               onChange={(v) => updateSelection({ stroke: v })}
             />
+            <StrokeStyleField shape={shape} updateSelection={updateSelection} />
             {/* The encapsulation frame is Vellum chrome drawn AROUND the
              *  glyph - which is why this arm exposes .fill and .stroke.
              *  Bare icons paint no outline and PrismFields' own gate
@@ -1589,8 +1575,8 @@ function IconBranch({
         </Field>
       </Section>
       <Section title="ICON">
-        {/* Make container + the encapsulate frame share one row, ABOVE
-         *  "Change icon" - both are shape-structure transforms, so they
+        {/* Make container + the encapsulate frame share one row - both
+         *  are shape-structure transforms, so they
          *  read as a pair. Make-container is omitted when the icon already
          *  is in a container (no double-wrap); the GROUPING section
          *  still serves image/service kinds. Encapsulate: wraps the icon
@@ -1611,54 +1597,8 @@ function IconBranch({
             </button>
           )}
           <span className="field-label shrink-0">frame</span>
-          <div className="seg flex-1 min-w-0">
-            {(
-              [
-                ['none', 'None'],
-                ['circle', 'Circle'],
-                ['square', 'Square'],
-              ] as const
-            ).map(([val, lab]) => {
-              const active =
-                val === 'none' ? !shape.frame : shape.frame === val;
-              return (
-                <button
-                  key={val}
-                  className={active ? 'active' : ''}
-                  onClick={() =>
-                    encapsulateSelection(val === 'none' ? null : val)
-                  }
-                  aria-label={lab}
-                  title={
-                    val === 'none'
-                      ? 'Remove the frame - back to a bare icon'
-                      : `Encapsulate the icon in a ${val} (becomes the connector boundary)`
-                  }
-                >
-                  {lab}
-                </button>
-              );
-            })}
-          </div>
+          <MediaFramePicker shape={shape} />
         </div>
-        <button
-          className="w-full inline-flex items-center justify-center gap-[6px] px-2 py-[6px] mb-3 text-[11px] font-medium rounded-md bg-bg-subtle border border-border text-fg hover:bg-bg-emphasis"
-          onClick={(e) => {
-            // Same `vellum:open-icon-picker` channel the container button
-            // uses (ContainerIconSection); `iconId` targets THIS icon
-            // shape so the flyout replaces its glyph in place - id,
-            // geometry, and connector bindings are preserved.
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            window.dispatchEvent(
-              new CustomEvent('vellum:open-icon-picker', {
-                detail: { iconId: shape.id, x: r.left, y: r.bottom },
-              }),
-            );
-          }}
-          title="Pick a different icon to replace this one in place."
-        >
-          <I.plusCircle /> Change icon
-        </button>
         {shape.iconAttribution ? (
           <div className="text-[11px] text-fg-muted leading-relaxed">
             <div className="flex items-center justify-between mb-2">

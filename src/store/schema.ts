@@ -291,13 +291,14 @@ const ShapeSchema = z.looseObject({
     .transform((s) => (s === undefined ? undefined : sanitizeSvg(s))),
   iconAttribution: IconAttribution.optional(),
   iconConstraints: IconConstraints.optional(),
-  // Encapsulation frame for kind:'icon' - the icon renders inset inside a
+  // Encapsulation frame for icons and images - artwork renders inset inside a
   // circle/square that becomes the shape's outline (fill/stroke + connector
-  // anchoring). Accepted on every kind for forward compat; non-icon kinds
+  // anchoring). Accepted on every kind for forward compat; other kinds
   // ignore it.
   frame: z
     .union([z.literal('circle'), z.literal('square')])
     .optional(),
+  frameAspectRatio: z.number().positive().optional().catch(undefined),
   // Glyph tint for an encapsulated icon - kept separate from `stroke`
   // (which is the frame border once framed). Accepted on every kind for
   // forward compat; only icons with a frame read it.

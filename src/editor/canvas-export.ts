@@ -1,12 +1,12 @@
 /* Shared canvas-export prep. Every image export (PNG / JPG / SVG / GIF,
  * the clipboard copy and the dialog preview) runs through
- * `prepareCanvasClone`: find the live canvas, measure the content in WORLD
- * units, clone + crop + scrub, resolve theme tokens, flatten foreignObject
- * labels into measured native text, and bake animation state.
+ * `prepareCanvasClone`: clone + scrub the live canvas, resolve theme tokens,
+ * flatten foreignObject labels into measured native text, bake animation
+ * state, then measure and crop the exported content in WORLD units.
  *
  * Design notes (each of these was a shipped bug):
- *  - The crop is computed in world coordinates by inverting the pan/zoom
- *    transform, so the output is the same at 25% and 400% zoom. The old
+ *  - The crop is measured on the prepared clone without pan/zoom, so the
+ *    output is the same at 25% and 400% zoom. The old
  *    screen-pixel crop made export resolution depend on the zoom level.
  *  - Padding is in world units too (= px at 1×), user-tunable.
  *  - The background is the colour the user is LOOKING at - the live
@@ -190,7 +190,7 @@ function styleProp(el: Element, prop: string): string | null {
 }
 
 /** How far painted pixels can extend past an element's geometry bbox
- *  (`getBoundingClientRect` on SVG ignores stroke, markers and filters).
+ *  (`getBBox` excludes stroke, markers and filters by default).
  *  Half the widest stroke, half the largest arrowhead, a few px for
  *  round joins / sketchy overshoot, plus the notes drop-shadow offset. */
 function paintBleed(root: Element): number {
@@ -227,6 +227,83 @@ function paintBleed(root: Element): number {
   scanBlur(root);
   root.querySelectorAll('[style]').forEach(scanBlur);
   return maxStroke / 2 + markerPx / 2 + 3 + (hasFilter ? 4 : 0) + blur;
+}
+
+/** Measure what will actually be exported, after labels are flattened and
+ *  editor overlays removed. Live foreignObjects can reserve hundreds of
+ *  empty pixels for a short container title; their layout boxes must not
+ *  become export margins. Mount invisibly so SVG text and transforms have
+ *  real browser geometry, and always detach the clone again. */
+function exportContentBounds(clone: SVGSVGElement, content: SVGGElement) {
+  const doc = clone.ownerDocument;
+  const host = doc.createElement('div');
+  host.setAttribute('data-vellum-export-measure', '');
+  host.style.cssText =
+    'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;visibility:hidden;pointer-events:none;contain:layout style;';
+  host.appendChild(clone);
+  doc.body.appendChild(host);
+  const clippedText: Array<{ text: SVGGElement; proxy: SVGElement }> = [];
+  try {
+    // getBBox ignores clip-path. Bound the flattener's clipped
+    // text (e.g. table cells) in its local coordinate space so hidden lines
+    // cannot enlarge the crop. Restore the actual text before serialization.
+    for (const text of clone.querySelectorAll<SVGGElement>('g[clip-path]')) {
+      const id = /^url\(#(vellum-export-clip-\d+)\)$/.exec(text.getAttribute('clip-path') ?? '')?.[1];
+      if (!id) continue;
+      const clip = clone.querySelector<SVGRectElement>(`clipPath[id="${id}"] > rect`);
+      if (!clip) continue;
+      const box = text.getBBox();
+      const x = Math.max(box.x, clip.x.baseVal.value);
+      const y = Math.max(box.y, clip.y.baseVal.value);
+      const w = Math.min(box.x + box.width, clip.x.baseVal.value + clip.width.baseVal.value) - x;
+      const h = Math.min(box.y + box.height, clip.y.baseVal.value + clip.height.baseVal.value) - y;
+      const proxy = doc.createElementNS(SVG_NS, w > 0 && h > 0 ? 'rect' : 'g');
+      if (w > 0 && h > 0) {
+        proxy.setAttribute('x', String(x));
+        proxy.setAttribute('y', String(y));
+        proxy.setAttribute('width', String(w));
+        proxy.setAttribute('height', String(h));
+      }
+      const transform = text.getAttribute('transform');
+      if (transform) proxy.setAttribute('transform', transform);
+      clippedText.push({ text, proxy });
+      text.replaceWith(proxy);
+    }
+    // Stay in SVG coordinates throughout. Screen rectangles bring browser
+    // layout/zoom into the crop even though the bitmap uses diagram units.
+    const ctm = content.getCTM();
+    if (!ctm) return null;
+    const toWorld = ctm.inverse();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const el of contentRoots(content) as SVGGraphicsElement[]) {
+      const r = el.getBBox();
+      if (r.width === 0 && r.height === 0) continue;
+      const matrix = el.getCTM();
+      if (!matrix) continue;
+      const transform = toWorld.multiply(matrix);
+      const bleed = paintBleed(el);
+      // Shape roots may rotate or mirror: map every corner of their local
+      // bounds, including nested SVG icons, into the content coordinate space.
+      for (const [x, y] of [
+        [r.x, r.y], [r.x + r.width, r.y],
+        [r.x, r.y + r.height], [r.x + r.width, r.y + r.height],
+      ]) {
+        const p = new DOMPoint(x, y).matrixTransform(transform);
+        minX = Math.min(minX, p.x - bleed);
+        minY = Math.min(minY, p.y - bleed);
+        maxX = Math.max(maxX, p.x + bleed);
+        maxY = Math.max(maxY, p.y + bleed);
+      }
+    }
+    return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+  } finally {
+    for (const { text, proxy } of clippedText) proxy.replaceWith(text);
+    clone.remove();
+    host.remove();
+  }
 }
 
 /** Custom properties of `theme`, read straight from the stylesheets -
@@ -450,49 +527,6 @@ export function prepareCanvasClone(opts: PrepareOptions = {}): CanvasClonePrep |
   const roots = contentRoots(liveContent, opts.ids);
   if (roots.length === 0) return fail(opts.ids ? 'nothing-selected' : 'empty');
 
-  // ── Content bbox in WORLD units ──────────────────────────────────────
-  // getBoundingClientRect is screen-space; the content group's screen CTM
-  // (viewBox × pan × zoom) inverted maps it back to world. No rotation in
-  // that matrix, so two corners suffice.
-  const ctm = liveContent.getScreenCTM();
-  if (!ctm) return fail('no-canvas');
-  const toWorld = ctm.inverse();
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const el of roots) {
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) continue;
-    const a = new DOMPoint(r.left, r.top).matrixTransform(toWorld);
-    const b = new DOMPoint(r.right, r.bottom).matrixTransform(toWorld);
-    const bleed = paintBleed(el);
-    minX = Math.min(minX, Math.min(a.x, b.x) - bleed);
-    minY = Math.min(minY, Math.min(a.y, b.y) - bleed);
-    maxX = Math.max(maxX, Math.max(a.x, b.x) + bleed);
-    maxY = Math.max(maxY, Math.max(a.y, b.y) + bleed);
-  }
-  if (!Number.isFinite(minX)) return fail(opts.ids ? 'nothing-selected' : 'empty');
-
-  const pad = Math.max(0, opts.padding ?? 24);
-  let vbX: number;
-  let vbY: number;
-  let w: number;
-  let h: number;
-  if (opts.cropRect) {
-    // Explicit region (the viewport): exactly what was asked for, no
-    // padding. Content outside it is clipped by the viewBox.
-    vbX = Math.round(opts.cropRect.x);
-    vbY = Math.round(opts.cropRect.y);
-    w = Math.max(1, Math.round(opts.cropRect.w));
-    h = Math.max(1, Math.round(opts.cropRect.h));
-  } else {
-    vbX = Math.floor(minX - pad);
-    vbY = Math.floor(minY - pad);
-    w = Math.max(1, Math.ceil(maxX + pad) - vbX);
-    h = Math.max(1, Math.ceil(maxY + pad) - vbY);
-  }
-
   // ── Colours ──────────────────────────────────────────────────────────
   const paperColour =
     tokens && paperFollowsTheme(svgEl)
@@ -507,13 +541,15 @@ export function prepareCanvasClone(opts: PrepareOptions = {}): CanvasClonePrep |
           ? paperColour
           : null;
 
-  // ── Clone + crop ─────────────────────────────────────────────────────
+  // ── Clone + scrub ────────────────────────────────────────────────────
   const clone = svgEl.cloneNode(true) as SVGSVGElement;
   const contentIndex = Array.from(svgEl.children).indexOf(liveContent);
   const contentClone = clone.children[contentIndex] as SVGGElement;
-  clone.setAttribute('width', String(w));
-  clone.setAttribute('height', String(h));
-  clone.setAttribute('viewBox', `${vbX} ${vbY} ${w} ${h}`);
+  // A nonzero, unscaled viewport for the temporary measurement mount.
+  // Final dimensions come from the flattened content below.
+  clone.setAttribute('width', '1');
+  clone.setAttribute('height', '1');
+  clone.removeAttribute('viewBox');
   clone.setAttribute('xmlns', SVG_NS);
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
   clone.removeAttribute('preserveAspectRatio');
@@ -540,10 +576,6 @@ export function prepareCanvasClone(opts: PrepareOptions = {}): CanvasClonePrep |
     const isGrid =
       child.localName === 'rect' && child.getAttribute('fill') === 'url(#dotgrid)';
     if (isGrid && opts.includeGrid) {
-      child.setAttribute('x', String(vbX));
-      child.setAttribute('y', String(vbY));
-      child.setAttribute('width', String(w));
-      child.setAttribute('height', String(h));
       continue;
     }
     child.remove();
@@ -585,26 +617,6 @@ export function prepareCanvasClone(opts: PrepareOptions = {}): CanvasClonePrep |
   if ((opts.animation ?? 'freeze') === 'keep') {
     styleText += '\n' + flowAnimationCss(doc);
   }
-  styleEl.textContent = styleText;
-  clone.insertBefore(styleEl, clone.firstChild);
-
-  // Background rect - inside the viewBox, behind grid + content. An actual
-  // element (rather than a CSS background on the root) so standalone SVG
-  // viewers honour it too.
-  if (background) {
-    const bgRect = doc.createElementNS(SVG_NS, 'rect');
-    bgRect.setAttribute('data-vellum-export-bg', '');
-    bgRect.setAttribute('x', String(vbX));
-    bgRect.setAttribute('y', String(vbY));
-    bgRect.setAttribute('width', String(w));
-    bgRect.setAttribute('height', String(h));
-    bgRect.setAttribute('fill', background);
-    // After defs/style, before the grid rect and content.
-    const firstContent = Array.from(clone.children).find(
-      (c) => c.localName !== 'defs' && c.localName !== 'style',
-    );
-    clone.insertBefore(bgRect, firstContent ?? null);
-  }
 
   // foreignObject labels → measured native text. Runs BEFORE var
   // resolution: the HTML's inline `color: var(--ink)` etc. resolve through
@@ -635,6 +647,59 @@ export function prepareCanvasClone(opts: PrepareOptions = {}): CanvasClonePrep |
 
   if ((opts.animation ?? 'freeze') === 'freeze') {
     applyPrismState(clone, PRISM_PARKED_PHASE, 1);
+  }
+
+  const bounds = exportContentBounds(clone, contentClone);
+  if (!bounds) return fail(opts.ids ? 'nothing-selected' : 'empty');
+  const pad = Math.max(0, opts.padding ?? 24);
+  let vbX: number;
+  let vbY: number;
+  let w: number;
+  let h: number;
+  if (opts.cropRect) {
+    // Explicit region (the viewport): exactly what was asked for, no
+    // padding. Content outside it is clipped by the viewBox.
+    vbX = Math.round(opts.cropRect.x);
+    vbY = Math.round(opts.cropRect.y);
+    w = Math.max(1, Math.round(opts.cropRect.w));
+    h = Math.max(1, Math.round(opts.cropRect.h));
+  } else {
+    vbX = Math.floor(bounds.minX - pad);
+    vbY = Math.floor(bounds.minY - pad);
+    w = Math.max(1, Math.ceil(bounds.maxX + pad) - vbX);
+    h = Math.max(1, Math.ceil(bounds.maxY + pad) - vbY);
+  }
+  clone.setAttribute('width', String(w));
+  clone.setAttribute('height', String(h));
+  clone.setAttribute('viewBox', `${vbX} ${vbY} ${w} ${h}`);
+  for (const child of Array.from(clone.children)) {
+    if (child.localName === 'rect' && child.getAttribute('fill') === 'url(#dotgrid)') {
+      child.setAttribute('x', String(vbX));
+      child.setAttribute('y', String(vbY));
+      child.setAttribute('width', String(w));
+      child.setAttribute('height', String(h));
+    }
+  }
+  // Add export-only global rules after detaching the measurement clone so
+  // an alternate export theme cannot affect the live editor's tokens.
+  styleEl.textContent = resolveVars(styleText);
+  clone.insertBefore(styleEl, clone.firstChild);
+
+  // Background rect - inside the viewBox, behind grid + content. An actual
+  // element (rather than a CSS background on the root) so standalone SVG
+  // viewers honour it too.
+  if (background) {
+    const bgRect = doc.createElementNS(SVG_NS, 'rect');
+    bgRect.setAttribute('data-vellum-export-bg', '');
+    bgRect.setAttribute('x', String(vbX));
+    bgRect.setAttribute('y', String(vbY));
+    bgRect.setAttribute('width', String(w));
+    bgRect.setAttribute('height', String(h));
+    bgRect.setAttribute('fill', resolveVars(background));
+    const firstContent = Array.from(clone.children).find(
+      (c) => c.localName !== 'defs' && c.localName !== 'style',
+    );
+    clone.insertBefore(bgRect, firstContent ?? null);
   }
 
   return {

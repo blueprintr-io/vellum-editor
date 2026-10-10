@@ -345,10 +345,10 @@ export type Shape = {
    *  this field existed, and still the default.
    *
    *  Honoured for `kind` in rect / service / ellipse / diamond / polygon /
-   *  container / freehand / table / text, and for `icon` only when `frame` is
-   *  set (a bare icon's `stroke` is its glyph tint, not an outline). Ignored
-   *  for `group` (paints `stroke="none"`), `image` (no outline for an actual
-   *  bitmap) and `note` (its brown `var(--note-ink)` is a fixed identity).
+   *  container / freehand / table / text, and for `icon` / `image` only when
+   *  `frame` is set (a bare icon's `stroke` is its glyph tint, not an outline).
+   *  Ignored for `group` (paints `stroke="none"`) and `note` (its brown
+   *  `var(--note-ink)` is a fixed identity).
    *  The single gate is `shapeSupportsPrismStroke()` in
    *  editor/canvas/prism.ts - the renderer and the inspector both call it, so
    *  neither can drift and the panel never offers a control that would paint
@@ -507,14 +507,18 @@ export type Shape = {
    *  before applying ops; missing = behave like a regular shape (escape hatch
    *  for icons users have explicitly unlocked, future feature). */
   iconConstraints?: IconConstraints;
-  /** Encapsulation frame. When set on a `kind: 'icon'` shape, the icon is
+  /** Encapsulation frame. When set on an icon or image, the artwork is
    *  drawn inset inside a circle / square that becomes the shape's ACTUAL
    *  outline: `fill`/`stroke` style the frame and connectors attach to its
    *  perimeter (circle → ellipse math, square → box) instead of the icon's
-   *  rasterized silhouette. Undefined = bare icon (silhouette anchoring, no
-   *  body). This is NOT a group or container - the icon shape itself *is*
-   *  the frame: one shape, one id, no parent. */
+   *  rasterized silhouette. Undefined = bare artwork (icons use silhouette
+   *  anchoring; images use their box). This is NOT a group or container -
+   *  the shape itself *is* the frame: one shape, one id, no parent. */
   frame?: 'circle' | 'square';
+  /** Image aspect ratio before framing. Keeps the image's proportions inside
+   *  the square frame and restores its box on removal, including after a
+   *  frame resize. Undefined on icons and on unframed images. */
+  frameAspectRatio?: number;
   /** Glyph tint for an ENCAPSULATED icon (`frame` set). Bare icons keep the
    *  legacy coupling where the tint is in `stroke`; once framed, `stroke`
    *  is the frame's border, so the recolour has to move to its own field or

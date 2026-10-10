@@ -175,14 +175,15 @@ function unmirroredShapeAnchorPoint(
     if (shape.notation.type === 'uml-lifeline' && fraction[1]*h >= Math.min(50,h*.3)) return [x+w/2,y+fraction[1]*h];
     return rayOutlineHit(x+w/2,y+h/2,x+fraction[0]*w,y+fraction[1]*h,notationGeometry(shape).outline) ?? [x+fraction[0]*w,y+fraction[1]*h];
   }
-  // A framed icon IS its frame for connector geometry - the line meets the
-  // circle/square outline, not the icon's rasterized silhouette. circle →
+  // Framed artwork IS its frame for connector geometry - the line meets the
+  // circle/square outline, not the artwork's inner box or silhouette. circle →
   // ellipse math; square → plain bbox (identical to a rect). Bare icons
   // (no frame) keep the silhouette path below.
+  const frameable = shape.kind === 'icon' || shape.kind === 'image';
   const geomKind: Shape['kind'] =
-    shape.kind === 'icon' && shape.frame === 'circle'
+    frameable && shape.frame === 'circle'
       ? 'ellipse'
-      : shape.kind === 'icon' && shape.frame === 'square'
+      : frameable && shape.frame === 'square'
         ? 'rect'
         : shape.kind;
   if (Array.isArray(anchor)) {

@@ -24,6 +24,7 @@ import { UndoDock } from './chrome/UndoDock';
 import { TipsButton } from './chrome/TipsButton';
 import { TipToast } from './chrome/TipToast';
 import { Inspector } from './chrome/inspector/Inspector';
+import { YamlInspector } from './chrome/YamlInspector';
 import { InlineLabelEditor } from './chrome/InlineLabelEditor';
 import { InlineCellEditor } from './chrome/InlineCellEditor';
 import { ConnectorLabelEditor } from './chrome/ConnectorLabelEditor';
@@ -173,6 +174,7 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
   // its own minimum, in which case the dock's minimum wins.
   const rightDockOpen = useEditor((s) => s.rightDockOpen);
   const rightDockWidth = useEditor((s) => s.rightDockWidth);
+  const [yamlInspectorOpen, setYamlInspectorOpen] = useState(false);
   const [viewportW, setViewportW] = useState(() =>
     typeof window === 'undefined' ? 1280 : window.innerWidth,
   );
@@ -182,10 +184,12 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const MIN_CANVAS_PX = 320;
-  const dockInset = rightDockOpen
+  const dockInset = rightDockOpen || yamlInspectorOpen
     ? Math.min(
         rightDockWidth,
-        Math.max(RIGHT_DOCK_MIN_PX, viewportW - MIN_CANVAS_PX),
+        yamlInspectorOpen && viewportW < 640
+          ? viewportW * 0.6
+          : Math.max(RIGHT_DOCK_MIN_PX, viewportW - MIN_CANVAS_PX),
       )
     : 0;
 
@@ -243,14 +247,14 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
           <LibraryPanel />
           <MoreShapesPopover />
           <UniversalLauncher />
-          <Actions />
+          <Actions onOpenYamlInspector={() => setYamlInspectorOpen(true)} />
           <GlobalDock />
           <UndoDock />
           <TipsButton />
           <TipToast />
           <NoticeToast />
           <ZoomDock />
-          <Inspector />
+          {!yamlInspectorOpen && <Inspector />}
           <InlineLabelEditor />
           <InlineCellEditor />
           <ConnectorLabelEditor />
@@ -260,7 +264,12 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
           <DiagramTabsSlot />
         </div>
 
-        <RightDockSlot width={dockInset} />
+        <RightDockSlot width={dockInset} yamlInspectorOpen={yamlInspectorOpen}>
+          <YamlInspector
+            onClose={() => setYamlInspectorOpen(false)}
+            canvasPaneRef={paneRef}
+          />
+        </RightDockSlot>
 
         {/* Dialogs stay OUTSIDE the inset wrapper - they're viewport-level
          *  overlays and should cover the dock too, not be squeezed beside it. */}
@@ -281,14 +290,18 @@ function HydratedEditor({ plugins }: VellumEditorProps = {}) {
   );
 }
 
-/** Renders the first plugin contributing `rightDock`, plus the core-owned
- *  drag handle on its leading edge. Returns null when no plugin opts in OR
- *  the dock is closed, so the layout collapses back to full-width.
+/** Shares the resizable right dock between the YAML Inspector and the first
+ *  plugin contributing `rightDock`. An open plugin remains mounted while
+ *  inspecting YAML, preserving its local state when the inspector closes.
  *
  *  `width` is the already-clamped inset the editor was squeezed by, so the
  *  panel and the gap it left always agree - deriving it independently here
  *  would let the two drift apart by a pixel during a viewport clamp. */
-function RightDockSlot({ width }: { width: number }) {
+function RightDockSlot({ width, yamlInspectorOpen, children }: {
+  width: number;
+  yamlInspectorOpen: boolean;
+  children: React.ReactNode;
+}) {
   const plugins = usePlugins();
   const rightDockOpen = useEditor((s) => s.rightDockOpen);
   const rightDockWidth = useEditor((s) => s.rightDockWidth);
@@ -306,10 +319,10 @@ function RightDockSlot({ width }: { width: number }) {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       resizeStartRef.current = {
         pointerX: e.clientX,
-        startWidth: rightDockWidth,
+        startWidth: width,
       };
     },
-    [rightDockWidth],
+    [width],
   );
   const onResizePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -331,8 +344,7 @@ function RightDockSlot({ width }: { width: number }) {
   }, []);
 
   const found = plugins.find((p) => p.rightDock != null);
-  if (!found || !rightDockOpen) return null;
-  const node = <PluginSlot pluginId={found.id} slot="rightDock" contribution={found.rightDock} />;
+  if (!yamlInspectorOpen && (!found || !rightDockOpen)) return null;
 
   return (
     <div
@@ -347,10 +359,27 @@ function RightDockSlot({ width }: { width: number }) {
         role="separator"
         aria-orientation="vertical"
         aria-label={`Resize panel (${RIGHT_DOCK_MIN_PX}–${RIGHT_DOCK_MAX_PX}px)`}
+        aria-valuemin={RIGHT_DOCK_MIN_PX}
+        aria-valuemax={RIGHT_DOCK_MAX_PX}
+        aria-valuenow={Math.round(width)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          e.preventDefault();
+          e.stopPropagation();
+          setRightDockWidth(rightDockWidth + (e.key === 'ArrowLeft' ? 20 : -20));
+        }}
         title={`Drag to resize (${RIGHT_DOCK_MIN_PX}–${RIGHT_DOCK_MAX_PX}px)`}
         className="flex-shrink-0 w-[5px] cursor-ew-resize hover:bg-accent/[0.14] transition-colors duration-100"
       />
-      <div className="flex-1 min-w-0 overflow-hidden">{node}</div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        {found && rightDockOpen && (
+          <div hidden={yamlInspectorOpen} className="h-full">
+            <PluginSlot pluginId={found.id} slot="rightDock" contribution={found.rightDock} />
+          </div>
+        )}
+        {yamlInspectorOpen && children}
+      </div>
     </div>
   );
 }

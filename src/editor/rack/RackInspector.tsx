@@ -6,7 +6,6 @@ import {
   Field,
   Section,
 } from '@/editor/chrome/inspector/ui/InspectorRow';
-import { ContainerIconFlyout } from '@/editor/chrome/icons/ContainerIconFlyout';
 import {
   clearRackChild,
   clearRackUnit,
@@ -64,7 +63,6 @@ export function RackInspector({ shape }: { shape: Shape }) {
   const all = useEditor((s) => s.diagram.shapes);
   const connectors = useEditor((s) => s.diagram.connectors);
   const readOnly = useEditor((s) => s.readOnly);
-  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const owner = shape.rackUnit ? shape : rackOwnerUnit(all, shape);
   const rack =
     shape.kind === 'rack'
@@ -181,16 +179,6 @@ export function RackInspector({ shape }: { shape: Shape }) {
               <div className="flex gap-3 mt-3 text-[11px]">
                 <button
                   type="button"
-                  className="text-accent"
-                  onClick={(e) => {
-                    const r = e.currentTarget.getBoundingClientRect();
-                    setAnchor({ x: r.left, y: r.bottom });
-                  }}
-                >
-                  Search icons…
-                </button>
-                <button
-                  type="button"
                   className="text-fg-muted"
                   onClick={() => st.updateShape(unit.id, clearRackUnit(unit))}
                 >
@@ -297,13 +285,6 @@ export function RackInspector({ shape }: { shape: Shape }) {
         </Field>
       </Section>
       {unit && device && <EquipmentSection unit={unit} device={device} all={all} />}
-      {anchor && unit && !readOnly && (
-        <ContainerIconFlyout
-          target={{ kind: 'rack-unit', unitId: unit.id }}
-          anchor={anchor}
-          onClose={() => setAnchor(null)}
-        />
-      )}
     </>
   );
 }
@@ -447,7 +428,6 @@ function EquipmentSection({ unit, device, all }: { unit: Shape; device: RackDevi
 
 function ModuleSection({ module, unit, all }: { module: Shape; unit: Shape; all: readonly Shape[] }) {
   const readOnly = useEditor((s) => s.readOnly);
-  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const st = useEditor.getState();
   const device = rackUnitDevice(unit);
   const name = device ? rackModuleName(device.spec, module.rackModule!.slot) : `Slot ${module.rackModule!.slot}`;
@@ -485,27 +465,15 @@ function ModuleSection({ module, unit, all }: { module: Shape; unit: Shape; all:
               ))}
             </select>
           </Field>
-          {type === 'item' && (
+          {type === 'item' && module.iconSvg && (
             <div className="flex gap-3 mt-2 text-[11px]">
               <button
                 type="button"
-                className="text-accent"
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  setAnchor({ x: r.left, y: r.bottom });
-                }}
+                className="text-fg-muted"
+                onClick={() => st.updateShape(module.id, { iconSvg: undefined, iconAttribution: undefined, iconConstraints: undefined })}
               >
-                {module.iconSvg ? 'Change icon…' : 'Choose icon…'}
+                Remove icon
               </button>
-              {module.iconSvg && (
-                <button
-                  type="button"
-                  className="text-fg-muted"
-                  onClick={() => st.updateShape(module.id, { iconSvg: undefined, iconAttribution: undefined, iconConstraints: undefined })}
-                >
-                  Remove icon
-                </button>
-              )}
             </div>
           )}
         </fieldset>
@@ -533,13 +501,6 @@ function ModuleSection({ module, unit, all }: { module: Shape; unit: Shape; all:
           cables whatever it holds. Delete empties it.
         </p>
       </Section>
-      {anchor && !readOnly && (
-        <ContainerIconFlyout
-          target={{ kind: 'rack-unit', unitId: module.id }}
-          anchor={anchor}
-          onClose={() => setAnchor(null)}
-        />
-      )}
     </>
   );
 }

@@ -34,6 +34,8 @@ import {
 import { collectDanglingRefs, type DanglingRef } from '@/store/schema';
 import { DialogShell } from './ui/DialogShell';
 import { Button } from './ui/Button';
+import { buildYamlSourceIndex } from './yaml-source';
+import { YamlLineNumbers } from './YamlLineNumbers';
 
 /** One-line, capped summary of connectors that point at a missing shape.
  *  These apply successfully (the rest of the diagram loads) but won't render,
@@ -52,7 +54,11 @@ function danglingSummary(refs: DanglingRef[]): string | null {
 
 type Scope = 'tab' | 'project';
 
-export function YamlDialog({ onClose }: { onClose: () => void }) {
+export function YamlDialog({ onClose, initialScope = 'tab', initialSelection }: {
+  onClose: () => void;
+  initialScope?: Scope;
+  initialSelection?: { id: string; tabId: string };
+}) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const filePath = useEditor((s) => s.filePath);
   const applyDiagram = useEditor((s) => s.applyDiagram);
@@ -62,7 +68,7 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
   // is easier to scan than a full workspace. Users with multiple tabs
   // who actually want the workspace view can flip the toggle once and
   // their preference is sticky inside this dialog session.
-  const [scope, setScope] = useState<Scope>('tab');
+  const [scope, setScope] = useState<Scope>(initialScope);
 
   // Seed text from the live store every time the scope changes - so
   // toggling Tab → Project rebuilds the textarea against the new scope
@@ -88,7 +94,7 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
   };
   // Seed once at mount for the initial scope. Subsequent scope changes
   // rebuild the buffer in `setScope` below.
-  const initial = useMemo(() => seedFor('tab'), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => seedFor(initialScope), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   // Non-blocking warning surfaced after a SUCCESSFUL apply (e.g. connectors
@@ -118,13 +124,41 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
     setApplyState('idle');
   };
 
-  // Auto-focus the textarea on open. cursor at start so the user immediately
-  // sees the top of the file (the meta block + first few shapes).
+  // Resolve against this editor's initial buffer, including the owning tab:
+  // inspector line numbers can differ between tab and project source. Do this
+  // only at mount so later diagram changes never move a user's editing caret.
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
-    ta.focus();
-    ta.setSelectionRange(0, 0);
+    const target = initialSelection && buildYamlSourceIndex(initial, initialSelection.tabId)
+      .ranges.find((range) => range.id === initialSelection.id &&
+        range.tabId === initialSelection.tabId && range.source !== 'graph');
+    const offset = target?.startOffset ?? 0;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(offset, offset);
+    ta.scrollTop = 0;
+    if (target) {
+      // Native textareas do not reliably scroll on setSelectionRange. Measure
+      // the prefix in a temporary matching textarea so wrapped lines and the
+      // user's text size are accounted for, rather than guessing by line count.
+      const styles = getComputedStyle(ta);
+      const lineHeight = parseFloat(styles.lineHeight);
+      const mirror = ta.cloneNode(false) as HTMLTextAreaElement;
+      mirror.removeAttribute('id');
+      mirror.setAttribute('aria-hidden', 'true');
+      mirror.tabIndex = -1;
+      mirror.value = initial.slice(0, offset) + '\u200b';
+      Object.assign(mirror.style, {
+        position: 'fixed', visibility: 'hidden', pointerEvents: 'none',
+        width: `${ta.clientWidth}px`, height: '0', minHeight: '0',
+        boxSizing: 'border-box', border: '0', overflow: 'hidden',
+      });
+      ta.parentElement?.appendChild(mirror);
+      const targetTop = mirror.scrollHeight - parseFloat(styles.paddingBottom) - lineHeight;
+      mirror.remove();
+      ta.scrollTop = Math.max(0, targetTop - lineHeight * 2);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filename = useMemo(() => {
@@ -224,8 +258,10 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
           </svg>
         </button>
       </div>
-      <textarea
+      <div className="flex flex-1 min-h-[360px] overflow-hidden rounded-md border border-border bg-bg-subtle font-mono text-[12px] leading-relaxed focus-within:border-accent">
+        <textarea
           ref={taRef}
+          aria-label="YAML editor"
           value={text}
           onChange={(e) => {
             setText(e.target.value);
@@ -236,7 +272,7 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
             if (applyState === 'applied') setApplyState('idle');
           }}
           spellCheck={false}
-          className="flex-1 min-h-[360px] font-mono text-[12px] leading-relaxed text-fg bg-bg-subtle border border-border rounded-md p-3 resize-none outline-none focus:border-accent"
+          className="flex-1 min-w-0 min-h-0 font-mono text-[12px] leading-relaxed text-fg bg-bg-subtle border-0 p-3 resize-none outline-none"
           // Tab inside the textarea inserts two spaces rather than escaping
           // focus - YAML is indentation-sensitive and the user is here to
           // edit the structure, not to navigate the dialog.
@@ -255,6 +291,9 @@ export function YamlDialog({ onClose }: { onClose: () => void }) {
             }
           }}
         />
+        {/* Mount after the textarea so its ref is ready for gutter measurement. */}
+        <YamlLineNumbers text={text} textareaRef={taRef} />
+      </div>
         {error && (
           <div className="text-[11px] text-red-400 font-mono whitespace-pre-wrap break-words">
             {error}

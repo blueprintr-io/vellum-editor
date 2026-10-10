@@ -347,7 +347,7 @@ function replaceImageForeignObject(
   image.setAttribute('width', fmt(w));
   image.setAttribute('height', fmt(h));
   image.setAttribute('href', img.getAttribute('src') ?? '');
-  image.setAttribute('preserveAspectRatio', 'none');
+  image.setAttribute('preserveAspectRatio', img.style.objectFit === 'contain' ? 'xMidYMid meet' : 'none');
   const radius = parseFloat(img.style.borderRadius) || 0;
   if (radius > 0) {
     image.setAttribute('clip-path', `url(#${addClip(svg, x, y, w, h, radius)})`);

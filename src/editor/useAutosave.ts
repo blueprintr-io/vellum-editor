@@ -15,18 +15,30 @@ export function setUnsavedChangesPrompt(enabled: boolean) {
 }
 
 export function useAutosave() {
-  const revision = useEditor((s) => s.workspaceRevision);
-  const identity = useEditor((s) => s.workspaceId);
   useEffect(() => {
-    if (!anyTabDirty()) return;
-    const timer = setTimeout(() => {
-      void saveCurrentWorkspace('autosave').catch((error) => {
-        console.error('autosave failed', error);
-        notify(`Autosave failed: ${error instanceof Error ? error.message : String(error)}. Use Save As to save your changes.`, { tone: 'warning', ttl: 15000 });
-      });
-    }, AUTOSAVE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [revision, identity]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (!anyTabDirty()) return;
+      timer = setTimeout(() => {
+        void saveCurrentWorkspace('autosave').catch((error) => {
+          console.error('autosave failed', error);
+          notify(`Autosave failed: ${error instanceof Error ? error.message : String(error)}. Use Save As to save your changes.`, { tone: 'warning', ttl: 15000 });
+        });
+      }, AUTOSAVE_DEBOUNCE_MS);
+    };
+    // Live gestures advance the revision on every move. Observe them without
+    // re-rendering the editor shell (and all of its chrome) just to reset a timer.
+    const unsubscribe = useEditor.subscribe((state, previous) => {
+      if (state.workspaceRevision !== previous.workspaceRevision ||
+        state.workspaceId !== previous.workspaceId) schedule();
+    });
+    schedule();
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const onUnload = (event: BeforeUnloadEvent) => {

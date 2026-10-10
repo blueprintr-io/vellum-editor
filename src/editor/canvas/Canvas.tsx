@@ -23,8 +23,10 @@ import {
 import type { Anchor, Connector as ConnectorT, Shape as ShapeT } from '@/store/types';
 import { buildSmoothPath, Shape, cellAtPoint } from './Shape';
 import { Connector } from './Connector';
+import { ArrangePreview } from './ArrangePreview';
 import { moveOrthogonalSegment } from './orthogonal-edit';
 import {
+  formatPixelValue,
   MeasurementBadge,
   MeasurementsOverlay,
   polylineMeasurement,
@@ -94,6 +96,17 @@ import {
   snapPointToGrid,
   snapTranslationToGrid,
 } from './snapping';
+import { computeAlignmentGuides } from './alignment-snapping';
+import { edgePanDelta } from './edge-pan';
+import { computeSpacingIndicators, type SpacingHint } from './shape-snapping';
+import {
+  rotatedSnapBounds,
+  snapDrawBox,
+  snapDrawStart,
+  snapMoveBox,
+  snapResizeBox,
+  snapTargets,
+} from './snap-interaction';
 import { mdToPlain } from '@/lib/inline-marks';
 import { importImageFile, type ImportedImage } from '@/lib/image-import';
 import { internImportedDataUrl } from '@/lib/doc-assets';
@@ -122,7 +135,7 @@ import {
 } from './line-jumps';
 import { groupRootOfParent, pickShapeAt } from './pick';
 import { connectorVisibleInMode, shapeVisibleInMode } from '@/store/layers';
-import { expandAllDescendants } from '@/store/hierarchy';
+import { expandAllDescendants, getContainerAnchor } from '@/store/hierarchy';
 import { tryInsertEmbeddedDiagram } from '@/editor/files';
 import {
   excalidrawToVellum,
@@ -148,7 +161,14 @@ type Interaction =
        *  pointer reaches a different U. */
       plan?: Pick<RackUnitDragPreview, 'targetId' | 'fits' | 'landing'>;
     }
-  | { kind: 'creating-shape'; toolName: string; start: Pt; current: Pt }
+  | {
+      kind: 'creating-shape';
+      toolName: string;
+      start: Pt;
+      current: Pt;
+      pointerStart: Pt;
+      moved: boolean;
+    }
   | {
       kind: 'creating-connector';
       /** When null, the from-side floats at `fromPoint` (line tool drawn from
@@ -736,12 +756,12 @@ export function Canvas() {
   // side has to do it. The count budget is the second gate: a translating
   // paint server repaints every referencing element each frame and can't be
   // composited, so past PRISM_MAX_ANIMATED shapes we keep the colours and
-  // drop the motion rather than letting the canvas grind. The selector
-  // returns a number, so the default equality check means no re-render until
-  // the count actually changes.
+  // drop the motion rather than letting the canvas grind. The count
+  // is memoized by the shape list so pan and UI changes don't rescan it.
   const reducedMotion = useReducedMotion();
-  const prismCount = useEditor((s) =>
-    s.diagram.shapes.reduce((n, sh) => (sh.strokeGradient ? n + 1 : n), 0),
+  const prismCount = useMemo(
+    () => rawShapes.reduce((n, sh) => (sh.strokeGradient ? n + 1 : n), 0),
+    [rawShapes],
   );
   const prismAnimate = !reducedMotion && prismCount <= PRISM_MAX_ANIMATED;
   const prismCtx = useMemo(
@@ -792,6 +812,7 @@ export function Canvas() {
     if (!el) return;
     const apply = (w: number, h: number) => {
       const prev = lastViewportRef.current;
+      if (prev?.w === w && prev.h === h) return;
       lastViewportRef.current = { w, h };
       setViewport({ w, h });
       // Keep the world point at the viewport CENTRE fixed as the box
@@ -804,7 +825,7 @@ export function Canvas() {
       // Zoom is deliberately untouched: a resize must never re-fit or
       // rescale, only re-frame. Skipped on the first measurement (no
       // previous size to compare) and on no-op observer fires.
-      if (!prev || (prev.w === w && prev.h === h)) return;
+      if (!prev) return;
       const { pan, setPan } = useEditor.getState();
       setPan({
         x: pan.x + (w - prev.w) / 2,
@@ -1266,6 +1287,17 @@ export function Canvas() {
     return m;
   }, [shapes]);
 
+  // Routing historically uses Array.find (first match). Keep that behavior
+  // for legacy files with duplicate IDs, independently of hit-test lookup.
+  const routingShapesByIdMap = useMemo(() => {
+    if (shapesByIdMap.size === shapes.length) return shapesByIdMap;
+    const map = new Map<string, ShapeT>();
+    for (const shape of shapes) {
+      if (!map.has(shape.id)) map.set(shape.id, shape);
+    }
+    return map;
+  }, [shapes, shapesByIdMap]);
+
   const visibleShapes = useMemo(
     () => shapes.filter((s) => shapeVisibleInMode(s, layerMode) && !hiddenByCollapsedAncestor(s, shapesByIdMap)),
     [shapes, layerMode, shapesByIdMap],
@@ -1397,10 +1429,10 @@ export function Canvas() {
     null,
   );
 
-  // Active snap-to-align guides - populated only while a shape drag is in
-  // progress AND cmd/ctrl is held. Each list holds world-space coordinates
+  // Alignment guides during shape gestures with shape snapping on.
+  // Each list holds world-space coordinates
   // (vertical guides = world x values; horizontal guides = world y values).
-  // Cleared on every drag start, on cmd release mid-drag, and on commit.
+  // Cleared on gesture boundaries and while Alt disables snapping.
   // Rendered as thin accent lines spanning the current viewport.
   const [alignGuides, setAlignGuides] = useState<
     | null
@@ -1410,12 +1442,8 @@ export function Canvas() {
       }
   >(null);
 
-  // Equal-spacing indicators ("12 / 12" labels) - populated
-  // alongside `alignGuides` whenever a drag puts the dragged shape into a
-  // row or column where three or more shapes share equal gaps. Cleared at
-  // the same lifecycle points as alignGuides so the two paint and vanish
-  // together. The hint set is recomputed from the snapped drag bbox so
-  // the labels track the same position the commit will see.
+  // Distances to adjacent shapes and highlighted equal-gap runs, measured
+  // from the final snapped geometry during dragging and resizing.
   const [spacingHints, setSpacingHints] = useState<SpacingHint[] | null>(
     null,
   );
@@ -1569,6 +1597,39 @@ export function Canvas() {
     shapesByIdMap,
   ]);
 
+  // Pan, zoom and hover only change the viewport/overlays. Reuse the scene
+  // so those updates do not sort and reconcile every diagram element.
+  const scene = useMemo(() => {
+    // Unified paint order - `orderByZ` over the effective-z map, the
+    // same pair `shapeUnder` and the click tiebreaks read, so what's
+    // on top is what gets the click. Members of a container (shapes
+    // AND connectors parented to it) are lifted above the frame by
+    // the effective z, so a frame raised in front of an outsider
+    // still paints behind its own contents. Groups are excluded here:
+    // their bodies render first, outside the z pass below.
+    // A rack unit draws its equipment's modules and interfaces itself.
+    const items = orderByZ(
+      visibleShapes.filter((s) => s.kind !== 'group' && !isRackChild(s)),
+      visibleConnectors,
+      effZ,
+    );
+    return items.map((it) =>
+      it.kind === 'shape' ? (
+        <Shape key={`s-${it.item.id}`} shape={it.item} />
+      ) : (
+        <Connector
+          key={`c-${it.item.id}`}
+          conn={it.item}
+          fromShape={'shape' in it.item.from ? routingShapesByIdMap.get(it.item.from.shape) : undefined}
+          toShape={'shape' in it.item.to ? routingShapesByIdMap.get(it.item.to.shape) : undefined}
+          silhouetteRevision={silhouetteTick}
+          selected={selectedSet.has(it.item.id)}
+          hops={lineJumps.get(it.item.id)}
+        />
+      ),
+    );
+  }, [visibleShapes, visibleConnectors, effZ, routingShapesByIdMap, selectedSet, lineJumps, silhouetteTick]);
+
   /** Set the interaction in the ref AND mirror its kind into state so the
    *  cursor can update without polling. Also derives + publishes the
    *  contextual tip-toast key (see TipToast.tsx) so the bottom-of-canvas
@@ -1577,6 +1638,8 @@ export function Canvas() {
    *  call site has to remember to update the tip independently. */
   const setInteraction = useCallback(
     (i: Interaction) => {
+      setAlignGuides(null);
+      setSpacingHints(null);
       interactionRef.current = i;
       setInteractionKind(i.kind);
       if (i.kind !== 'rack-unit-drag' && i.kind !== 'dragging') setRackDragPreview(null);
@@ -1778,9 +1841,12 @@ export function Canvas() {
   const eventToWorld = useCallback(
     (e: { clientX: number; clientY: number }): Pt => {
       const screen = clientToScreen(e, getRect());
+      // Edge panning replays a stationary pointer immediately after moving the
+      // view, before React has rendered the new pan into this closure.
+      const { pan, zoom } = useEditor.getState();
       return screenToWorld(screen, { pan, zoom });
     },
-    [pan, zoom],
+    [],
   );
 
   // hit testing
@@ -2055,6 +2121,9 @@ export function Canvas() {
   const onPointerMoveRef = useRef<
     ((e: React.PointerEvent<SVGSVGElement>) => void) | null
   >(null);
+  const edgePanStartRef = useRef<Pt | null>(null);
+  const edgePanDraggedRef = useRef(false);
+  const edgePanPausedRef = useRef(false);
   const clearPortDwell = useCallback(() => {
     if (portDwellTimerRef.current != null) {
       clearTimeout(portDwellTimerRef.current);
@@ -2775,6 +2844,10 @@ export function Canvas() {
   // pointer handlers
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
+      edgePanStartRef.current = { x: e.clientX, y: e.clientY };
+      edgePanDraggedRef.current = false;
+      edgePanPausedRef.current = false;
+      lastPointerMoveRef.current = null;
       // Touch-specific: track the finger and watch for a second one so we
       // can switch into pinch mode. Mouse and pen events skip this branch
       // entirely - desktop interaction is unchanged.
@@ -3828,17 +3901,11 @@ export function Canvas() {
       const treatAsShape =
         toolCreatesShape(tool) || (def?.custom === true && tool !== 'empty');
       if (treatAsShape) {
-        setInteraction({
-          kind: 'creating-shape',
-          toolName: tool,
-          start: world,
-          current: world,
+        const start = snapDrawStart(world, visibleShapes.map(visualBoxOf), zoom, {
+          shape: effectiveShapeSnap(e), grid: effectiveGridSnap(e),
         });
-        setPreview({
-          kind: 'creating-shape',
-          rect: { x: world.x, y: world.y, w: 0, h: 0 },
-          toolName: tool,
-        });
+        setInteraction({ kind: 'creating-shape', toolName: tool, start, current: world, pointerStart: world, moved: false });
+        setPreview({ kind: 'creating-shape', rect: { ...start, w: 0, h: 0 }, toolName: tool });
         (e.target as Element).setPointerCapture?.(e.pointerId);
         pointerDownRef.current = e.pointerId;
         return;
@@ -3985,6 +4052,11 @@ export function Canvas() {
     (e: React.PointerEvent<SVGSVGElement>) => {
       // Kept for the hover-to-connect timer, which replays it (portDwellAt).
       lastPointerMoveRef.current = e;
+      const edgeStart = edgePanStartRef.current;
+      if (edgeStart && (e.buttons & 1) &&
+          Math.hypot(e.clientX - edgeStart.x, e.clientY - edgeStart.y) >= DRAG_THRESHOLD) {
+        edgePanDraggedRef.current = true;
+      }
       // Touch bookkeeping: keep finger positions current and cancel the
       // long-press timer once the user has clearly drifted into a drag.
       if (e.pointerType === 'touch') {
@@ -4262,35 +4334,18 @@ export function Canvas() {
 
 
       if (cur.kind === 'creating-shape') {
-        // Shift-constrain - for the primitive shape tools (rect/ellipse/
-        // diamond), holding shift locks the drag to a 1:1 aspect ratio so the
-        // user gets a perfect square / circle / equilateral diamond. We use
-        // the LARGER of |dx|/|dy| so the drag never visually shrinks when the
-        // modifier is engaged.
-        // The unconstrained world point is still stashed so that releasing
-        // shift mid-drag returns to free-aspect immediately.
-        const constrainSquare =
-          e.shiftKey &&
-          (cur.toolName === 'rect' ||
-            cur.toolName === 'ellipse' ||
-            cur.toolName === 'diamond');
-        let cx = world.x;
-        let cy = world.y;
-        if (constrainSquare) {
-          const dx = world.x - cur.start.x;
-          const dy = world.y - cur.start.y;
-          const size = Math.max(Math.abs(dx), Math.abs(dy));
-          cx = cur.start.x + (dx >= 0 ? size : -size);
-          cy = cur.start.y + (dy >= 0 ? size : -size);
-        }
-        const r = normalizeRect({
-          x: cur.start.x,
-          y: cur.start.y,
-          w: cx - cur.start.x,
-          h: cy - cur.start.y,
-        });
         cur.current = world;
-        setPreview({ kind: 'creating-shape', rect: r, toolName: cur.toolName });
+        // Snap can move the starting anchor by several pixels. A click is
+        // still a click: measure drag intent from the actual pointer-down.
+        cur.moved ||= Math.hypot(world.x - cur.pointerStart.x, world.y - cur.pointerStart.y) * zoom >= DRAG_THRESHOLD;
+        const snapped = snapDrawBox(cur.start, cur.moved ? world : cur.start, visibleShapes.map(visualBoxOf), zoom, {
+          shape: effectiveShapeSnap(e), grid: effectiveGridSnap(e),
+          square: shiftMod(e) && ['rect', 'ellipse', 'diamond'].includes(cur.toolName),
+          minSize: cur.toolName === 'text' ? 0 : 8,
+        });
+        setPreview({ kind: 'creating-shape', rect: snapped.box, toolName: cur.toolName });
+        setAlignGuides(snapped.guides.vx.length || snapped.guides.hy.length ? snapped.guides : null);
+        setSpacingHints(snapped.hints.length ? snapped.hints : null);
         return;
       }
 
@@ -4536,7 +4591,7 @@ export function Canvas() {
           let vMaxY = -Infinity;
           for (const id of cur.ids) {
             const sh = rawShapes.find((s) => s.id === id);
-            if (!sh) continue;
+            if (!sh || !visibleIds.has(id)) continue;
             const start = cur.worldStart.get(id);
             if (!start) continue;
             const x = start.x + dx;
@@ -4555,7 +4610,7 @@ export function Canvas() {
           // selected lines. There are no shape boxes to align, so the lines
           // themselves are the bbox. Deliberately scoped to that case: a
           // mixed shape+line selection keeps snapping on its shapes, and
-// folding a waypoint that juts out into the union would
+          // folding a waypoint that juts out into the union would
           // move the snap target of every existing multi-drag.
           if (cur.ids.length === 0) {
             for (const ct of cur.connectorTranslates) {
@@ -4589,118 +4644,30 @@ export function Canvas() {
             // and the spacing hints all come back empty, leaving the grid
             // pass below as the only snap.
             const others = shapeSnap
-              ? visibleShapes.filter((s) => {
-                  if (dragSet.has(s.id)) return false;
-                  let walk: ShapeT | undefined = s;
-                  while (walk?.parent) {
-                    if (dragSet.has(walk.parent)) return false;
-                    walk = rawShapes.find((p) => p.id === walk!.parent);
-                  }
-                  return true;
-                })
+              ? snapTargets(visibleShapes, rawShapes, dragSet)
               : [];
             // Candidates carry their visible rect too, so an icon row matches
             // on the glyphs the user sees rather than the padded boxes. The
             // returned dx/dy is a pure translation, so it applies unchanged to
             // the raw shape positions (visual box = raw box + constant offset).
-            const othersVisual = others.map((s) => ({ ...s, ...visualBoxOf(s) }));
+            const othersVisual = others.map(visualBoxOf);
             const tentativeBbox = {
               x: vMinX,
               y: vMinY,
               w: vMaxX - vMinX,
               h: vMaxY - vMinY,
             };
-            const alignSnap = computeAlignSnap(
-              tentativeBbox,
-              othersVisual,
-              8 / zoom,
+            const snapped = snapMoveBox(
+              tentativeBbox, { x: minX, y: minY }, othersVisual, zoom,
+              { shape: shapeSnap, grid: gridSnap, lockX: lockV, lockY: lockH },
             );
-            const spacingSnap = computeSpacingSnap(
-              tentativeBbox,
-              othersVisual,
-              8 / zoom,
-            );
-            // Per-axis precedence: spacing wins over align when both
-            // fire on the same axis. Reasoning: align brings one edge
-            // onto another, which is locally useful; spacing brings
-            // the drag into the *rhythm* of an existing series, which
-            // says something about the row. The rhythm is the
-            // stronger signal - if it's available, users overwhelmingly
-            // want it. Without this inversion, align would "steal" the
-            // drop just before it reached the rhythm position and the
-            // user would feel snapped one pixel short of where they
-            // were aiming.
-            const useSpacingX = spacingSnap.firedX;
-            const useSpacingY = spacingSnap.firedY;
-            // minX/minY include the tentative pointer delta. Recover the
-            // gesture-start union corner so grid snapping is anchored to the
-            // object's top-left rather than to the grabbed cursor position.
-            const dragAnchorStart = { x: minX - dx, y: minY - dy };
-            const appliedDx = useSpacingX ? spacingSnap.dx : alignSnap.dx;
-            const appliedDy = useSpacingY ? spacingSnap.dy : alignSnap.dy;
-            dx += appliedDx;
-            dy += appliedDy;
-            // Re-apply the axis lock: snap may have nudged the frozen axis.
-            if (lockH) dy = 0;
-            if (lockV) dx = 0;
-            // Grid snap (Grid Snapping ON): on any axis where the drag didn't
-            // latch onto another shape, quantize the selection's top-left
-            // onto the finest visible grid so a free drag still lands on
-            // the dots/gridlines the user can see (which is why grid snapping
-            // forces gridlines on). Shape align/spacing wins when it fired -
-            // its target carries more intent than the bare grid. A frozen
-            // axis (⇧ axis-lock) is skipped so grid snap can't reintroduce
-            // motion the lock just zeroed.
-            const firedShapeX = useSpacingX || alignSnap.vx.length > 0;
-            const firedShapeY = useSpacingY || alignSnap.hy.length > 0;
-            const beforeGrid = { x: dx, y: dy };
-            const snappedDelta = snapTranslationToGrid(
-              dragAnchorStart,
-              beforeGrid,
-              {
-                x: gridSnap && !firedShapeX && !lockV,
-                y: gridSnap && !firedShapeY && !lockH,
-              },
-              gridSnapStep(zoom),
-            );
-            const gridDx = snappedDelta.x - beforeGrid.x;
-            const gridDy = snappedDelta.y - beforeGrid.y;
-            dx = snappedDelta.x;
-            dy = snappedDelta.y;
-            // Align guides only paint for the axes where align actually
-            // won the precedence call - otherwise the dashed guide-line
-            // visibly contradicts the spacing snap's chosen position. Also
-            // suppress the guide on a locked-out axis: a vertical guide line
-            // (vx, an X snap) is meaningless when X is frozen, and likewise
-            // a horizontal guide (hy, a Y snap) when Y is frozen.
-            const showVx = useSpacingX || lockV ? [] : alignSnap.vx;
-            const showHy = useSpacingY || lockH ? [] : alignSnap.hy;
-            setAlignGuides(
-              showVx.length || showHy.length
-                ? { vx: showVx, hy: showHy }
-                : null,
-            );
-            // Equal-spacing hints - fire on the post-snap bbox so labels
-            // sit at the same position the user is about to commit to.
-            // Threshold ties to the visual stickiness: 4 screen px on
-            // either side feels equal at any zoom.
-            const snappedBbox = {
-              x: vMinX + appliedDx + gridDx,
-              y: vMinY + appliedDy + gridDy,
-              w: vMaxX - vMinX,
-              h: vMaxY - vMinY,
-            };
-            const hints = computeSpacingIndicators(
-              snappedBbox,
-              othersVisual,
-              4 / zoom,
-            );
-            setSpacingHints((prev) =>
-              hints.length === 0 ? (prev ? null : prev) : hints,
-            );
+            dx += snapped.dx;
+            dy += snapped.dy;
+            setAlignGuides(snapped.guides.vx.length || snapped.guides.hy.length ? snapped.guides : null);
+            setSpacingHints(snapped.hints.length ? snapped.hints : null);
           }
         } else {
-          // Modifier was released mid-drag - clear any guides we'd painted.
+          // Snapping is disabled for this move; clear the gesture feedback.
           // Functional set to avoid a stale closure read of `alignGuides`.
           setAlignGuides((g) => (g ? null : g));
           setSpacingHints((h) => (h ? null : h));
@@ -4882,121 +4849,17 @@ export function Canvas() {
           !aspectLocked && !fromCenter && effectiveShapeSnap(e);
         const doGridSnap =
           !aspectLocked && !fromCenter && effectiveGridSnap(e);
-        let sizeSnappedW = false;
-        let sizeSnappedH = false;
-        if (doShapeSnap) {
-          // Match another shape's width or height. Skip the selection itself
-          // when collecting candidates - every member is part of the gesture.
-          const skipIds = new Set<string>(cur.childrenStart.keys());
-          const before = nextUnion;
-          nextUnion = snapResizeToSiblingSizes(
-            nextUnion,
-            cur.startUnion,
-            cur.handle,
-            null,
-            skipIds,
-            zoom,
-          );
-          sizeSnappedW = nextUnion.w !== before.w;
-          sizeSnappedH = nextUnion.h !== before.h;
-        }
-        // Alignment snap: mirror translate-snap onto the union bbox so the
-        // dragged edges latch to neighbour shape edges/centers. Shape
-        // snapping OFF passes no neighbours, so align, spacing and the hints
-        // all no-op and only the grid fallback below applies.
-        if (doShapeSnap || doGridSnap) {
-          const skipIds = new Set(cur.childrenStart.keys());
-          const others = doShapeSnap
-            ? rawShapes.filter((s) => !skipIds.has(s.id))
-            : [];
-          const alignSnap = computeResizeAlignSnap(
-            nextUnion,
-            cur.handle,
-            others,
-            8 / zoom,
-          );
-          const spacingSnap = computeResizeSpacingSnap(
-            nextUnion,
-            cur.handle,
-            others,
-            8 / zoom,
-          );
-          // Same precedence as the single-shape resize path: spacing
-          // wins per-axis when both fire on it.
-          nextUnion = {
-            x: spacingSnap.firedX ? spacingSnap.x : alignSnap.x,
-            y: spacingSnap.firedY ? spacingSnap.y : alignSnap.y,
-            w: spacingSnap.firedX ? spacingSnap.w : alignSnap.w,
-            h: spacingSnap.firedY ? spacingSnap.h : alignSnap.h,
-          };
-          // Grid-snap fallback (same as the single-shape path): on any axis
-          // where the union didn't latch onto a sibling size, edge, or
-          // rhythm, quantize the union's DRAGGED edge onto the visible grid.
-          // Members rescale to the snapped union below.
-          const firedShapeX =
-            sizeSnappedW || spacingSnap.firedX || alignSnap.vx.length > 0;
-          const firedShapeY =
-            sizeSnappedH || spacingSnap.firedY || alignSnap.hy.length > 0;
-          const movesLeft =
-            cur.handle === 'nw' || cur.handle === 'w' || cur.handle === 'sw';
-          const movesRight =
-            cur.handle === 'ne' || cur.handle === 'e' || cur.handle === 'se';
-          const movesTop =
-            cur.handle === 'nw' || cur.handle === 'n' || cur.handle === 'ne';
-          const movesBottom =
-            cur.handle === 'sw' || cur.handle === 's' || cur.handle === 'se';
-          const gridStep = gridSnapStep(zoom);
-          if (doGridSnap && !firedShapeX) {
-            if (movesLeft) {
-              const rightEdge = nextUnion.x + nextUnion.w;
-              const snapped =
-                Math.round(nextUnion.x / gridStep) * gridStep;
-              if (rightEdge - snapped >= 1) {
-                nextUnion = { ...nextUnion, x: snapped, w: rightEdge - snapped };
-              }
-            } else if (movesRight) {
-              const snapped =
-                Math.round((nextUnion.x + nextUnion.w) / gridStep) * gridStep;
-              if (snapped - nextUnion.x >= 1) {
-                nextUnion = { ...nextUnion, w: snapped - nextUnion.x };
-              }
-            }
-          }
-          if (doGridSnap && !firedShapeY) {
-            if (movesTop) {
-              const bottomEdge = nextUnion.y + nextUnion.h;
-              const snapped =
-                Math.round(nextUnion.y / gridStep) * gridStep;
-              if (bottomEdge - snapped >= 1) {
-                nextUnion = { ...nextUnion, y: snapped, h: bottomEdge - snapped };
-              }
-            } else if (movesBottom) {
-              const snapped =
-                Math.round((nextUnion.y + nextUnion.h) / gridStep) * gridStep;
-              if (snapped - nextUnion.y >= 1) {
-                nextUnion = { ...nextUnion, h: snapped - nextUnion.y };
-              }
-            }
-          }
-          const showVx = spacingSnap.firedX ? [] : alignSnap.vx;
-          const showHy = spacingSnap.firedY ? [] : alignSnap.hy;
-          setAlignGuides(
-            showVx.length || showHy.length
-              ? { vx: showVx, hy: showHy }
-              : null,
-          );
-          const hints = computeSpacingIndicators(
-            nextUnion,
-            others,
-            4 / zoom,
-          );
-          setSpacingHints((prev) =>
-            hints.length === 0 ? (prev ? null : prev) : hints,
-          );
-        } else {
-          setAlignGuides((g) => (g ? null : g));
-          setSpacingHints((h) => (h ? null : h));
-        }
+        const others = doShapeSnap
+          ? snapTargets(visibleShapes, rawShapes, new Set(cur.childrenStart.keys()))
+          : [];
+        const snapped = snapResizeBox(
+          nextUnion, cur.startUnion, cur.handle,
+          others.map(visualBoxOf), others, zoom,
+          { shape: doShapeSnap, grid: doGridSnap },
+        );
+        nextUnion = snapped.box;
+        setAlignGuides(snapped.guides.vx.length || snapped.guides.hy.length ? snapped.guides : null);
+        setSpacingHints(snapped.hints.length ? snapped.hints : null);
         // Floor each axis to a positive minimum so the user can't yank
         // every member into a singularity. The union's normalisation also
         // catches negative w/h on commit.
@@ -5308,9 +5171,8 @@ export function Canvas() {
         }
 
         const forceUniform =
-          target?.kind === 'icon' &&
-          (target.iconConstraints?.lockAspect === true ||
-            target.frame !== undefined);
+          (target?.kind === 'icon' && target.iconConstraints?.lockAspect === true) ||
+          ((target?.kind === 'icon' || target?.kind === 'image') && target.frame !== undefined);
         // Resize modifiers:
         //   ⇧Shift / icon lockAspect → preserve the start aspect ratio.
         //   ⌘/Ctrl                   → resize from the centre - the side
@@ -5345,132 +5207,23 @@ export function Canvas() {
           !aspectLocked && !fromCenter && effectiveShapeSnap(e);
         const doGridSnap =
           !aspectLocked && !fromCenter && effectiveGridSnap(e);
-        // Match another shape's width or height. Operates in the shape's
-        // LOCAL frame (same axes applyHandleDrag manipulated) so candidates
-        // from rotated siblings are still compared on raw w/h. Each axis
-        // snaps independently - match width from one shape, height from
-        // another. The anchor (corner opposite the dragged handle) stays
-        // fixed, so the snap re-derives x/y from cur.startGeom.
-        let sizeSnappedW = false;
-        let sizeSnappedH = false;
-        if (doShapeSnap) {
-          const before = next;
-          next = snapResizeToSiblingSizes(
-            next,
-            cur.startGeom,
-            cur.handle,
-            cur.id,
-            cur.childrenStart,
-            zoom,
-          );
-          sizeSnappedW = next.w !== before.w;
-          sizeSnappedH = next.h !== before.h;
-        }
-        // Alignment + spacing snap to neighbour edges/centres - same
-        // machinery as drag. Rotated shapes skip it (next is in LOCAL frame;
-        // world-coord targets wouldn't apply correctly). Shape snapping OFF
-        // passes no neighbours, so only the grid fallback below applies.
-        if (!shapeRotDeg && (doShapeSnap || doGridSnap)) {
-          const skipIds = new Set<string>([cur.id]);
-          if (cur.childrenStart) {
-            for (const id of cur.childrenStart.keys()) skipIds.add(id);
-          }
-          const others = doShapeSnap
-            ? rawShapes.filter((s) => !skipIds.has(s.id))
-            : [];
-          const alignSnap = computeResizeAlignSnap(
-            next,
-            cur.handle,
-            others,
-            8 / zoom,
-          );
-          const spacingSnap = computeResizeSpacingSnap(
-            next,
-            cur.handle,
-            others,
-            8 / zoom,
-          );
-          // Per-axis precedence: spacing wins over align - same rule as
-          // the drag handler. Rhythm is a stronger signal than edge
-          // alignment, and the user expects "the resize clicks into the
-          // gap pattern" rather than "snaps to a stray edge just before
-          // hitting the rhythm."
-          next = {
-            x: spacingSnap.firedX ? spacingSnap.x : alignSnap.x,
-            y: spacingSnap.firedY ? spacingSnap.y : alignSnap.y,
-            w: spacingSnap.firedX ? spacingSnap.w : alignSnap.w,
-            h: spacingSnap.firedY ? spacingSnap.h : alignSnap.h,
-          };
-          // Grid snap (Grid Snapping ON): on any axis where the resize didn't
-          // latch onto another shape's size, edge, or spacing rhythm,
-          // quantize the DRAGGED edge onto the finest visible grid - the
-          // same fallback the drag handler applies to a free move (which is
-          // why grid snapping forces gridlines on). The FIXED edge opposite
-          // the grabbed handle stays put; only the dragged edge moves to the
-          // nearest gridline, and only when that keeps the box positive.
-          const firedShapeX =
-            sizeSnappedW || spacingSnap.firedX || alignSnap.vx.length > 0;
-          const firedShapeY =
-            sizeSnappedH || spacingSnap.firedY || alignSnap.hy.length > 0;
-          const movesLeft =
-            cur.handle === 'nw' || cur.handle === 'w' || cur.handle === 'sw';
-          const movesRight =
-            cur.handle === 'ne' || cur.handle === 'e' || cur.handle === 'se';
-          const movesTop =
-            cur.handle === 'nw' || cur.handle === 'n' || cur.handle === 'ne';
-          const movesBottom =
-            cur.handle === 'sw' || cur.handle === 's' || cur.handle === 'se';
-          const gridStep = gridSnapStep(zoom);
-          if (doGridSnap && !firedShapeX) {
-            if (movesLeft) {
-              const rightEdge = next.x + next.w;
-              const snapped =
-                Math.round(next.x / gridStep) * gridStep;
-              if (rightEdge - snapped >= 1) {
-                next = { ...next, x: snapped, w: rightEdge - snapped };
-              }
-            } else if (movesRight) {
-              const snapped =
-                Math.round((next.x + next.w) / gridStep) * gridStep;
-              if (snapped - next.x >= 1) {
-                next = { ...next, w: snapped - next.x };
-              }
-            }
-          }
-          if (doGridSnap && !firedShapeY) {
-            if (movesTop) {
-              const bottomEdge = next.y + next.h;
-              const snapped =
-                Math.round(next.y / gridStep) * gridStep;
-              if (bottomEdge - snapped >= 1) {
-                next = { ...next, y: snapped, h: bottomEdge - snapped };
-              }
-            } else if (movesBottom) {
-              const snapped =
-                Math.round((next.y + next.h) / gridStep) * gridStep;
-              if (snapped - next.y >= 1) {
-                next = { ...next, h: snapped - next.y };
-              }
-            }
-          }
-          const showVx = spacingSnap.firedX ? [] : alignSnap.vx;
-          const showHy = spacingSnap.firedY ? [] : alignSnap.hy;
-          setAlignGuides(
-            showVx.length || showHy.length
-              ? { vx: showVx, hy: showHy }
-              : null,
-          );
-          // Spacing indicators on the post-snap bbox so the labels
-          // confirm any rhythm the resize landed on (whether it was
-          // pulled in by the snap or already aligned by hand).
-          const hints = computeSpacingIndicators(next, others, 4 / zoom);
-          setSpacingHints((prev) =>
-            hints.length === 0 ? (prev ? null : prev) : hints,
-          );
-        } else {
-          setAlignGuides((g) => (g ? null : g));
-          setSpacingHints((h) => (h ? null : h));
-        }
+        const skipIds = new Set<string>([cur.id, ...(cur.childrenStart?.keys() ?? [])]);
+        const others = doShapeSnap ? snapTargets(visibleShapes, rawShapes, skipIds) : [];
+        const snapped = snapResizeBox(
+          next, cur.startGeom, cur.handle,
+          others.map(visualBoxOf), others, zoom,
+          { shape: doShapeSnap, grid: doGridSnap, align: !shapeRotDeg },
+        );
+        next = snapped.box;
+        const publishResizeFeedback = () => {
+          const actual = useEditor.getState().diagram.shapes.find((s) => s.id === cur.id);
+          const targets = doShapeSnap && !shapeRotDeg ? others.map(visualBoxOf) : [];
+          const box = actual ? visualBoxOf(actual) : next;
+          const guides = computeAlignmentGuides(box, targets);
+          const hints = computeSpacingIndicators(box, targets, 1e-6);
+          setAlignGuides(guides.vx.length || guides.hy.length ? guides : null);
+          setSpacingHints(hints.length ? hints : null);
+        };
         // Rotated shapes: applyHandleDrag operates in the shape's LOCAL
         // (un-rotated) frame, which keeps the anchor corner stable in
         // local coords. But the rotation pivot is the bbox CENTER, and the
@@ -5611,6 +5364,7 @@ export function Canvas() {
             // them now instead of dragging them along.
           }
           updateShapesLive(patches);
+          publishResizeFeedback();
           return;
         }
         // Freehand: `next` only moves the envelope. Scale the stroke by the
@@ -5621,9 +5375,11 @@ export function Canvas() {
             ...next,
             points: scaleFreehandPoints(cur.startPoints, cur.startGeom, next),
           });
+          publishResizeFeedback();
           return;
         }
         updateShapeLive(cur.id, next);
+        publishResizeFeedback();
         return;
       }
 
@@ -6048,6 +5804,7 @@ export function Canvas() {
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
+      edgePanPausedRef.current = true;
       // Touch bookkeeping. Drop this finger from the tracking Map and
       // cancel any pending long-press. If we were pinching, end the
       // gesture as soon as we drop below 2 fingers (no auto-resume of
@@ -6105,30 +5862,10 @@ export function Canvas() {
       }
 
       if (cur.kind === 'creating-shape') {
-        // Mirror the pointer-move shift-constrain so the committed shape
-        // matches the preview the user saw at the moment of release. Keying
-        // off `e.shiftKey` (rather than a flag stored in interaction state)
-        // means that dropping shift on the same tick as releasing the mouse
-        // commits a free-aspect shape, which matches what they see.
-        const constrainSquare =
-          e.shiftKey &&
-          (cur.toolName === 'rect' ||
-            cur.toolName === 'ellipse' ||
-            cur.toolName === 'diamond');
-        let cx = cur.current.x;
-        let cy = cur.current.y;
-        if (constrainSquare) {
-          const dx = cur.current.x - cur.start.x;
-          const dy = cur.current.y - cur.start.y;
-          const size = Math.max(Math.abs(dx), Math.abs(dy));
-          cx = cur.start.x + (dx >= 0 ? size : -size);
-          cy = cur.start.y + (dy >= 0 ? size : -size);
-        }
-        const r = normalizeRect({
-          x: cur.start.x,
-          y: cur.start.y,
-          w: cx - cur.start.x,
-          h: cy - cur.start.y,
+        const { box: r } = snapDrawBox(cur.start, cur.moved ? cur.current : cur.start, visibleShapes.map(visualBoxOf), zoom, {
+          shape: effectiveShapeSnap(e), grid: effectiveGridSnap(e),
+          square: shiftMod(e) && ['rect', 'ellipse', 'diamond'].includes(cur.toolName),
+          minSize: cur.toolName === 'text' ? 0 : 8,
         });
         // Text tool: bare click → drop a shrink-wrapping text shape and
         // open the inline editor. autoSize=true means the bbox grows as
@@ -6228,9 +5965,6 @@ export function Canvas() {
           if (!toolLock) setActiveTool('1');
           return;
         }
-        // Tiny but non-zero drag - nudge to a minimum readable size.
-        if (r.w < 8) r.w = 8;
-        if (r.h < 8) r.h = 8;
         // For custom-bound slots (8/9 etc.), pull the glyph + label out of
         // the binding so the dropped shape carries them.
         const def = bindings[activeTool];
@@ -6951,6 +6685,81 @@ export function Canvas() {
   onPointerUpRef.current = onPointerUp;
   onPointerMoveRef.current = onPointerMove;
 
+  // Keep dragging beyond the visible canvas without requiring more physical
+  // pointer movement. Replaying the regular move handler keeps snapping,
+  // previews, carried connectors and the gesture's single undo entry intact.
+  useEffect(() => {
+    const eligible = (interaction: Interaction) => {
+      if (interaction.kind === 'creating-connector') return interaction.commitMode !== 'click';
+      return [
+        'dragging', 'translate-connector', 'resizing', 'resizing-multi',
+        'creating-shape', 'marquee', 'drag-endpoint', 'drag-waypoint',
+        'create-waypoint', 'rack-unit-drag',
+      ].includes(interaction.kind);
+    };
+    if (!eligible(interactionRef.current)) return;
+    const { workspaceId, activeTabId } = useEditor.getState();
+    let frame = 0;
+    let previousTime = performance.now();
+    const tick = (time: number) => {
+      const elapsed = time - previousTime;
+      previousTime = time;
+      const current = interactionRef.current;
+      if (!eligible(current)) return;
+      frame = requestAnimationFrame(tick);
+      const event = lastPointerMoveRef.current;
+      const start = edgePanStartRef.current;
+      const svg = svgRef.current;
+      const state = useEditor.getState();
+      if (edgePanPausedRef.current || document.hidden || !event || !start || !svg ||
+          event.pointerId !== pointerDownRef.current || !(event.buttons & 1) ||
+          state.workspaceId !== workspaceId || state.activeTabId !== activeTabId ||
+          (state.readOnly && current.kind !== 'marquee')) return;
+      // A click or a stationary long press near the edge must remain a click.
+      if (!edgePanDraggedRef.current) return;
+      const delta = edgePanDelta(
+        { x: event.clientX, y: event.clientY }, svg.getBoundingClientRect(), elapsed,
+      );
+      if (!delta.x && !delta.y) return;
+      state.setPan({ x: state.pan.x + delta.x, y: state.pan.y + delta.y });
+      onPointerMoveRef.current?.(event);
+    };
+    const pause = () => { edgePanPausedRef.current = true; };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') pause(); };
+    const onVisibility = () => { if (document.hidden) pause(); };
+    frame = requestAnimationFrame(tick);
+    window.addEventListener('blur', pause);
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('blur', pause);
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [interactionKind]);
+
+  useEffect(() => {
+    const refreshSnapModifiers = (event: KeyboardEvent) => {
+      if (!['Alt', 'Shift', 'Meta', 'Control'].includes(event.key)) return;
+      const kind = interactionRef.current.kind;
+      if (['idle', 'panning', 'pinching'].includes(kind)) return;
+      const last = lastPointerMoveRef.current;
+      if (!last || !(last.buttons & 1) || last.pointerId !== pointerDownRef.current) return;
+      onPointerMoveRef.current?.({
+        ...last, altKey: event.altKey, shiftKey: event.shiftKey,
+        metaKey: event.metaKey, ctrlKey: event.ctrlKey,
+      });
+    };
+    window.addEventListener('keydown', refreshSnapModifiers);
+    window.addEventListener('keyup', refreshSnapModifiers);
+    return () => {
+      window.removeEventListener('keydown', refreshSnapModifiers);
+      window.removeEventListener('keyup', refreshSnapModifiers);
+    };
+  }, []);
+
+
   // wheel zoom (with ⌘/ctrl modifier OR pinch trackpad)
   // Native onWheel is passive by default → can't preventDefault. Attach via
   // ref + addEventListener with passive:false instead.
@@ -7570,15 +7379,15 @@ export function Canvas() {
           return;
         }
         // Container-anchor-icon override. We check three things so the
-        // override is precise: the hit is an icon, its parent is a
+        // override is precise: the hit is an icon or image, its parent is a
         // container, and that container's anchorId points back at this
         // exact icon. Loose icons that just happen to be parented to a
         // container (multi-icon containers) keep label-edit on dblclick.
-        if (hit.kind === 'icon' && hit.parent) {
+        if ((hit.kind === 'icon' || hit.kind === 'image') && hit.parent) {
           const parent = rawShapes.find((s) => s.id === hit.parent);
           if (
             parent?.kind === 'container' &&
-            parent.anchorId === hit.id
+            getContainerAnchor(parent, rawShapes)?.id === hit.id
           ) {
             window.dispatchEvent(
               new CustomEvent('vellum:open-icon-picker', {
@@ -7895,34 +7704,7 @@ export function Canvas() {
             })}
           </g>
         )}
-        {(() => {
-          // Unified paint order - `orderByZ` over the effective-z map, the
-          // same pair `shapeUnder` and the click tiebreaks read, so what's
-          // on top is what gets the click. Members of a container (shapes
-          // AND connectors parented to it) are lifted above the frame by
-          // the effective z, so a frame raised in front of an outsider
-          // still paints behind its own contents. Groups are excluded here:
-          // their bodies render first, outside the z pass (see above).
-          // A rack unit draws its equipment's modules and interfaces itself.
-          const items = orderByZ(
-            visibleShapes.filter((s) => s.kind !== 'group' && !isRackChild(s)),
-            visibleConnectors,
-            effZ,
-          );
-          return items.map((it) =>
-            it.kind === 'shape' ? (
-              <Shape key={`s-${it.item.id}`} shape={it.item} />
-            ) : (
-              <Connector
-                key={`c-${it.item.id}`}
-                conn={it.item}
-                shapes={shapes}
-                selected={selectedSet.has(it.item.id)}
-                hops={lineJumps.get(it.item.id)}
-              />
-            ),
-          );
-        })()}
+        {scene}
 
         {showMeasurements && (
           <MeasurementsOverlay
@@ -8236,6 +8018,8 @@ export function Canvas() {
             );
           })}
 
+        <ArrangePreview />
+
         {/* Selection overlay - halos + corner handles for selected shapes.
          *  Rendered AFTER smart anchors so the handles always sit on top. */}
         {selectedShapes.map((s) => (
@@ -8291,7 +8075,7 @@ export function Canvas() {
          *  span the screen viewport in world units derived from the current
          *  pan + zoom. */}
         {alignGuides && (
-          <g pointerEvents="none">
+          <g data-snap-guides="" pointerEvents="none">
             {(() => {
               // Convert the screen viewport to world-space bounds so guide
               // lines run edge to edge regardless of pan/zoom.
@@ -8307,6 +8091,7 @@ export function Canvas() {
                   {alignGuides.vx.map((vx, i) => (
                     <line
                       key={`gv-${i}-${vx}`}
+                      data-snap-axis="x"
                       x1={vx}
                       y1={minWY}
                       x2={vx}
@@ -8320,6 +8105,7 @@ export function Canvas() {
                   {alignGuides.hy.map((hy, i) => (
                     <line
                       key={`gh-${i}-${hy}`}
+                      data-snap-axis="y"
                       x1={minWX}
                       y1={hy}
                       x2={maxWX}
@@ -8336,15 +8122,15 @@ export function Canvas() {
           </g>
         )}
 
-        {/* Equal-spacing indicators ("12 / 12" labels). One
-         *  line per matched gap, with tick marks at each end and a
+        {/* Neighbor distances, with matching gaps highlighted together. One
+         *  line per gap, with tick marks at each end and a
          *  paper-backed distance label centred on the gap. Stroke /
          *  label sizes are 1/zoom so they read at any zoom without
          *  visually overpowering the geometry being measured. */}
         {spacingHints && (
-          <g pointerEvents="none">
+          <g data-spacing-indicators="" pointerEvents="none">
             {spacingHints.flatMap((hint, hi) => {
-              const stroke = 'var(--stroke-red)';
+              const stroke = hint.kind === 'equal' ? 'var(--stroke-red)' : 'var(--accent)';
               const sw = 1 / zoom;
               const tickHalf = 4 / zoom;
               const fontSize = 11 / zoom;
@@ -8352,7 +8138,7 @@ export function Canvas() {
               const labelPadY = 2 / zoom;
               const labelOffset = 10 / zoom;
               return hint.gaps.map((g, gi) => {
-                const label = String(Math.round(g.distance));
+                const label = formatPixelValue(g.distance);
                 const labelW =
                   label.length * fontSize * 0.6 + labelPadX * 2;
                 const labelH = fontSize + labelPadY * 2;
@@ -8360,7 +8146,12 @@ export function Canvas() {
                   const y = hint.perp;
                   const cx = (g.from + g.to) / 2;
                   return (
-                    <g key={`sh-${hi}-${gi}`}>
+                    <g
+                      key={`sh-${hi}-${gi}`}
+                      data-spacing-kind={hint.kind ?? 'equal'}
+                      data-spacing-axis={hint.axis}
+                      data-spacing-distance={g.distance}
+                    >
                       <line
                         x1={g.from}
                         y1={y}
@@ -8412,7 +8203,12 @@ export function Canvas() {
                 const x = hint.perp;
                 const cy = (g.from + g.to) / 2;
                 return (
-                  <g key={`sh-${hi}-${gi}`}>
+                  <g
+                      key={`sh-${hi}-${gi}`}
+                      data-spacing-kind={hint.kind ?? 'equal'}
+                      data-spacing-axis={hint.axis}
+                      data-spacing-distance={g.distance}
+                    >
                     <line
                       x1={x}
                       y1={g.from}
@@ -8767,9 +8563,8 @@ function SelectionOverlay({
   const w = shape.w + pad * 2;
   const h = shape.h + pad * 2;
   const lockAspect =
-    shape.kind === 'icon' &&
-    (shape.iconConstraints?.lockAspect === true ||
-      shape.frame !== undefined);
+    (shape.kind === 'icon' && shape.iconConstraints?.lockAspect === true) ||
+    ((shape.kind === 'icon' || shape.kind === 'image') && shape.frame !== undefined);
   // Text shapes render the same four edges as everything else: e/w sets the
   // wrap width, n/s sets the `minH` floor. The e/w bars keep their taller
   // visual treatment below since they're the higher-traffic gesture.
@@ -9289,15 +9084,6 @@ function endpointAt(
   return { x: fromShape.x + fromShape.w / 2, y: fromShape.y + fromShape.h / 2 };
 }
 
-/** Snap-to-align: for a tentative drag bbox, find the smallest dx/dy that
- *  pulls one of the bbox's nine reference lines (left/center/right ×
- *  top/center/bottom) onto a matching reference line of any non-dragged
- *  shape. Only deltas within `threshold` (world units) on each axis are
- *  considered. Returns the suggested offset plus the reference x/y values
- *  that triggered the snap, so the caller can render alignment guides.
- *
- *  Cmd-only feature: this runs only while the drag handler sees the
- *  modifier held, so users who don't want snapping pay no cost. */
 /** Geometry a shape presents to the alignment + equal-spacing math. For most
  *  kinds this is the raw shape box. Icons are the exception: their glyph
  *  carries transparent margin inside the box, so the box edges sit outside the
@@ -9311,16 +9097,15 @@ function endpointAt(
  *  this unconditionally. */
 function visualBoxOf(s: {
   kind: ShapeT['kind'];
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number; y: number; w: number; h: number;
+  rotation?: number;
   iconAttribution?: ShapeT['iconAttribution'];
 }): { x: number; y: number; w: number; h: number } {
+  let box = { x: s.x, y: s.y, w: s.w, h: s.h };
   if (s.kind === 'icon') {
     const cb = getIconContentBox(s.iconAttribution?.iconId);
     if (cb) {
-      return {
+      box = {
         x: s.x + cb.fx0 * s.w,
         y: s.y + cb.fy0 * s.h,
         w: Math.max(0, (cb.fx1 - cb.fx0) * s.w),
@@ -9328,533 +9113,7 @@ function visualBoxOf(s: {
       };
     }
   }
-  return { x: s.x, y: s.y, w: s.w, h: s.h };
-}
-
-/** Equal-spacing hint - "12 / 12" labels rendered between
- *  shapes that share equal gaps along an axis. One hint per axis (a drag
- *  can satisfy both axes simultaneously, e.g. landing inside a grid). */
-type SpacingHint = {
-  /** Which axis the gaps run along - 'horizontal' = labels arranged
-   *  left-to-right on a shared y line; 'vertical' = top-to-bottom on a
-   *  shared x line. */
-  axis: 'horizontal' | 'vertical';
-  /** Perpendicular position where the indicator line sits (y for
-   *  horizontal axis, x for vertical) - world coords. Picked at the drag
-   *  bbox's perpendicular centre so the labels track the dragged shape. */
-  perp: number;
-  /** Each gap to render. `from`/`to` are the inner edges along the axis
-   *  (so the indicator line spans exactly the gap, no overshoot into
-   *  the shapes). `distance` is the gap width in world px. */
-  gaps: { from: number; to: number; distance: number }[];
-};
-
-/** Detect equal-spacing patterns the dragged bbox completes with two or
- *  more neighbouring shapes along an axis. As
- *  the user drags a shape into the row of an existing pair (or a longer
- *  sequence) with matching gaps, distance labels appear between every
- *  matched gap so the user can see they've landed on the rhythm.
- *
- *  Detection rule for each axis:
- *    1. Take shapes whose PERPENDICULAR extent overlaps the drag bbox's
- *       (so they're "in the same row/column" as the drag).
- *    2. Sort the drag bbox + those candidates by their along-axis start.
- *    3. A gap is DRAG-ADJACENT if it's `gaps[dragIdx - 1]` (gap above the
- *       drag) or `gaps[dragIdx]` (gap below). The drag can sit at the
- *       start of the sequence (only one drag-adjacent gap, on the right),
- *       in the middle (two), or at the end (only one, on the left).
- *    4. For each drag-adjacent gap, grow the longest run of consecutive
- *       gaps that match its value within `threshold`. The run satisfies
- *       the hint if it spans ≥ 2 gaps - that's the minimum needed for
- *       "equal spacing" to be visible.
- *    5. Pick the longest qualifying run across both drag-adjacent seeds.
- *       Emit one indicator per gap in the run.
- *
- *  The end-cases matter: stacking a 4th shape on top of a 3-column with
- *  consistent gaps is exactly when the user wants the feedback ("yes,
- *  you've kept the rhythm"), but the drag sits at sequence index 0 - the
- *  old "must be in the middle" rule silently dropped it.
- *
- *  Returns at most one hint per axis. The perpendicular position is the
- *  drag bbox's centre on the perpendicular axis (where the eye expects
- *  the label to sit). */
-function computeSpacingIndicators(
-  bbox: { x: number; y: number; w: number; h: number },
-  others: ShapeT[],
-  threshold: number,
-): SpacingHint[] {
-  const hints: SpacingHint[] = [];
-  for (const axis of ['horizontal', 'vertical'] as const) {
-    const isH = axis === 'horizontal';
-    const axisStart = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.x : b.y;
-    const axisEnd = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.x + b.w : b.y + b.h;
-    const perpStart = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.y : b.x;
-    const perpEnd = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.y + b.h : b.x + b.w;
-    const dPS = perpStart(bbox);
-    const dPE = perpEnd(bbox);
-    const candidates = others.filter(
-      (s) => s.w > 0 && s.h > 0 && perpStart(s) < dPE && perpEnd(s) > dPS,
-    );
-    if (candidates.length < 2) continue;
-    type Item = { start: number; end: number; isDrag: boolean };
-    const seq: Item[] = [
-      { start: axisStart(bbox), end: axisEnd(bbox), isDrag: true },
-      ...candidates.map((c) => ({
-        start: axisStart(c),
-        end: axisEnd(c),
-        isDrag: false,
-      })),
-    ];
-    seq.sort((a, b) => a.start - b.start);
-    // Collapse overlapping items so a stack of two coincident shapes
-    // doesn't read as a zero-width gap. Equal-spacing only makes sense
-    // when each item is distinct along the axis.
-    const collapsed: Item[] = [];
-    for (const it of seq) {
-      const prev = collapsed[collapsed.length - 1];
-      if (prev && it.start <= prev.end) {
-        prev.end = Math.max(prev.end, it.end);
-        prev.isDrag = prev.isDrag || it.isDrag;
-        continue;
-      }
-      collapsed.push({ ...it });
-    }
-    if (collapsed.length < 3) continue;
-    const dragIdx = collapsed.findIndex((s) => s.isDrag);
-    if (dragIdx === -1) continue;
-    const gaps: number[] = [];
-    for (let i = 0; i + 1 < collapsed.length; i++) {
-      gaps.push(collapsed[i + 1].start - collapsed[i].end);
-    }
-    // Gap indices touching the drag. At a sequence end, only one exists.
-    const seeds: number[] = [];
-    if (dragIdx - 1 >= 0) seeds.push(dragIdx - 1);
-    if (dragIdx < gaps.length) seeds.push(dragIdx);
-    let best: { lo: number; hi: number } | null = null;
-    for (const seed of seeds) {
-      const target = gaps[seed];
-      if (target <= 1) continue;
-      let lo = seed;
-      let hi = seed;
-      while (lo > 0 && Math.abs(gaps[lo - 1] - target) <= threshold) lo--;
-      while (
-        hi + 1 < gaps.length &&
-        Math.abs(gaps[hi + 1] - target) <= threshold
-      )
-        hi++;
-      if (hi - lo + 1 < 2) continue;
-      if (!best || hi - lo > best.hi - best.lo) best = { lo, hi };
-    }
-    if (!best) continue;
-    const perp = (dPS + dPE) / 2;
-    const outGaps: { from: number; to: number; distance: number }[] = [];
-    for (let gi = best.lo; gi <= best.hi; gi++) {
-      const from = collapsed[gi].end;
-      const to = collapsed[gi + 1].start;
-      outGaps.push({ from, to, distance: to - from });
-    }
-    if (outGaps.length >= 2) hints.push({ axis, perp, gaps: outGaps });
-  }
-  return hints;
-}
-
-/** Equal-spacing SNAP - partner to `computeSpacingIndicators`. For each
- *  axis, look at the perpendicular-overlapping neighbours, find the gaps
- *  between consecutive existing neighbours, and propose drag positions
- *  that would extend each gap (immediately above the topmost neighbour
- *  with the same gap, or immediately below the bottommost). Returns the
- *  smallest dx/dy that lands the drag on the closest such candidate,
- *  provided it's within `threshold`.
- *
- *  Without this, the indicator labels could fire only AFTER the user
- *  hand-placed the drag at the exact rhythm position - they'd be feedback
- *  for an already-perfect drop rather than a snap that pulls the drag
- *  into place. Pairing snap + indicator means the user feels the click
- *  AND sees the matched gaps in the same frame.
- *
- *  Per-axis: returns 0 if no candidate is within threshold. Callers
- *  typically guard each axis behind "align snap didn't already commit to
- *  this axis" so spacing snap doesn't fight edge alignment. */
-function computeSpacingSnap(
-  bbox: { x: number; y: number; w: number; h: number },
-  others: ShapeT[],
-  threshold: number,
-): { dx: number; dy: number; firedX: boolean; firedY: boolean } {
-  let outDx = 0;
-  let outDy = 0;
-  let firedX = false;
-  let firedY = false;
-  for (const axis of ['horizontal', 'vertical'] as const) {
-    const isH = axis === 'horizontal';
-    const axisStart = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.x : b.y;
-    const axisEnd = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.x + b.w : b.y + b.h;
-    const perpStart = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.y : b.x;
-    const perpEnd = (b: { x: number; y: number; w: number; h: number }) =>
-      isH ? b.y + b.h : b.x + b.w;
-    const dPS = perpStart(bbox);
-    const dPE = perpEnd(bbox);
-    const candidates = others
-      .filter(
-        (s) => s.w > 0 && s.h > 0 && perpStart(s) < dPE && perpEnd(s) > dPS,
-      )
-      .map((s) => ({ start: axisStart(s), end: axisEnd(s) }))
-      .sort((a, b) => a.start - b.start);
-    if (candidates.length < 2) continue;
-    const dragLen = axisEnd(bbox) - axisStart(bbox);
-    const dragStart = axisStart(bbox);
-    // Candidate drag-start positions: each consecutive existing pair's
-    // gap g implies the drag could sit g away on either end.
-    let bestDelta = 0;
-    let bestAbs = threshold;
-    for (let i = 0; i + 1 < candidates.length; i++) {
-      const g = candidates[i + 1].start - candidates[i].end;
-      if (g <= 1) continue;
-      const aboveStart = candidates[i].start - g - dragLen;
-      const belowStart = candidates[i + 1].end + g;
-      for (const cand of [aboveStart, belowStart]) {
-        const d = cand - dragStart;
-        const ad = Math.abs(d);
-        if (ad < bestAbs) {
-          bestAbs = ad;
-          bestDelta = d;
-        }
-      }
-    }
-    if (bestAbs < threshold) {
-      if (isH) {
-        outDx = bestDelta;
-        firedX = true;
-      } else {
-        outDy = bestDelta;
-        firedY = true;
-      }
-    }
-  }
-  return { dx: outDx, dy: outDy, firedX, firedY };
-}
-
-function computeAlignSnap(
-  bbox: { x: number; y: number; w: number; h: number },
-  others: ShapeT[],
-  threshold: number,
-): { dx: number; dy: number; vx: number[]; hy: number[] } {
-  const sourceX = [bbox.x, bbox.x + bbox.w / 2, bbox.x + bbox.w];
-  const sourceY = [bbox.y, bbox.y + bbox.h / 2, bbox.y + bbox.h];
-  let bestDx = 0;
-  let bestAbsX = threshold;
-  let bestDy = 0;
-  let bestAbsY = threshold;
-  // Collect all reference lines from other shapes - one pass so guides can
-  // include every alignment that happens to coincide at the snap distance.
-  const targetX: number[] = [];
-  const targetY: number[] = [];
-  for (const o of others) {
-    if (o.w === 0 && o.h === 0) continue;
-    targetX.push(o.x, o.x + o.w / 2, o.x + o.w);
-    targetY.push(o.y, o.y + o.h / 2, o.y + o.h);
-  }
-  for (const sx of sourceX) {
-    for (const tx of targetX) {
-      const delta = tx - sx;
-      const abs = Math.abs(delta);
-      if (abs <= bestAbsX) {
-        bestAbsX = abs;
-        bestDx = delta;
-      }
-    }
-  }
-  for (const sy of sourceY) {
-    for (const ty of targetY) {
-      const delta = ty - sy;
-      const abs = Math.abs(delta);
-      if (abs <= bestAbsY) {
-        bestAbsY = abs;
-        bestDy = delta;
-      }
-    }
-  }
-  // Snap accepted on each axis only if an actual candidate beat the threshold.
-  // Re-walk the targets and emit guides for every reference line that lies
-  // on the snapped position (so multi-shape alignment shows multiple lines).
-  const SNAP_EPS = 0.5; // tolerate floating-point drift
-  const vx: number[] = [];
-  const hy: number[] = [];
-  if (bestAbsX < threshold) {
-    const finalSourceX = sourceX.map((sx) => sx + bestDx);
-    for (const tx of targetX) {
-      if (finalSourceX.some((fx) => Math.abs(fx - tx) < SNAP_EPS)) {
-        if (!vx.includes(tx)) vx.push(tx);
-      }
-    }
-  } else {
-    bestDx = 0;
-  }
-  if (bestAbsY < threshold) {
-    const finalSourceY = sourceY.map((sy) => sy + bestDy);
-    for (const ty of targetY) {
-      if (finalSourceY.some((fy) => Math.abs(fy - ty) < SNAP_EPS)) {
-        if (!hy.includes(ty)) hy.push(ty);
-      }
-    }
-  } else {
-    bestDy = 0;
-  }
-  return { dx: bestDx, dy: bestDy, vx, hy };
-}
-
-/** Snap the moving edges of a resize bbox to neighbour shapes' edges /
- *  centers, mirroring computeAlignSnap's translate-snap pipeline. Which
- *  edges are "moving" is derived from the handle: corner handles move two
- *  edges, edge handles one. The fixed edges stay put - only the dragged
- *  edges shift to land on a target line.
- *
- *  Rotated `others` are excluded (their world bbox isn't axis-aligned, so
- *  their edges aren't comparable to ours). Returns the snapped rect plus
- *  guide-line arrays the renderer reuses from the drag-snap path. */
-/** Equal-spacing SNAP for RESIZE - moves an edge of the resize bbox onto
- *  a rhythm position (gap from the moving edge to the nearest opposite-
- *  side neighbour matches some other gap in the row/column). Mirrors
- *  `computeSpacingSnap` for the drag flow but works per-edge rather than
- *  by rigid translation, because resize only moves the edges named by
- *  the handle.
- *
- *  Reference gaps considered for each moving edge:
- *    - Gaps between consecutive perpendicular-overlapping neighbours
- *      (the existing rhythm among other shapes in the row/column).
- *    - The gap on the OPPOSITE side of the resize bbox - i.e., from
- *      the FIXED edge of the resize shape to its nearest non-resize
- *      neighbour on that side. This covers the "sandwich" case: a
- *      shape between two neighbours where the user wants the resize
- *      to equalise the gaps on both sides.
- *
- *  Per-axis `firedX` / `firedY` flags let the caller suppress align
- *  guides on axes where spacing snap won - same precedence story as
- *  the drag handler. */
-function computeResizeSpacingSnap(
-  bbox: { x: number; y: number; w: number; h: number },
-  handle: Handle,
-  others: ShapeT[],
-  threshold: number,
-): {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  firedX: boolean;
-  firedY: boolean;
-} {
-  const movesLeft = handle === 'nw' || handle === 'w' || handle === 'sw';
-  const movesRight = handle === 'ne' || handle === 'e' || handle === 'se';
-  const movesTop = handle === 'nw' || handle === 'n' || handle === 'ne';
-  const movesBottom = handle === 'sw' || handle === 's' || handle === 'se';
-  let nx = bbox.x;
-  let ny = bbox.y;
-  let nw = bbox.w;
-  let nh = bbox.h;
-  let firedX = false;
-  let firedY = false;
-  for (const axis of ['h', 'v'] as const) {
-    const isH = axis === 'h';
-    const movesStart = isH ? movesLeft : movesTop;
-    const movesEnd = isH ? movesRight : movesBottom;
-    if (!movesStart && !movesEnd) continue;
-    const perpStartFn = (s: { x: number; y: number; w: number; h: number }) =>
-      isH ? s.y : s.x;
-    const perpEndFn = (s: { x: number; y: number; w: number; h: number }) =>
-      isH ? s.y + s.h : s.x + s.w;
-    const axisStartFn = (s: { x: number; y: number; w: number; h: number }) =>
-      isH ? s.x : s.y;
-    const axisEndFn = (s: { x: number; y: number; w: number; h: number }) =>
-      isH ? s.x + s.w : s.y + s.h;
-    const curBox = { x: nx, y: ny, w: nw, h: nh };
-    const dPS = perpStartFn(curBox);
-    const dPE = perpEndFn(curBox);
-    const bboxStart = axisStartFn(curBox);
-    const bboxEnd = axisEndFn(curBox);
-    const candidates = others
-      .filter(
-        (s) =>
-          s.w > 0 && s.h > 0 && perpStartFn(s) < dPE && perpEndFn(s) > dPS,
-      )
-      .map((s) => ({ start: axisStartFn(s), end: axisEndFn(s) }))
-      .sort((a, b) => a.start - b.start);
-    if (candidates.length === 0) continue;
-    const rhythmGaps: number[] = [];
-    for (let i = 0; i + 1 < candidates.length; i++) {
-      const g = candidates[i + 1].start - candidates[i].end;
-      if (g > 1) rhythmGaps.push(g);
-    }
-    const leftNeighbours = candidates.filter((c) => c.end <= bboxStart);
-    const rightNeighbours = candidates.filter((c) => c.start >= bboxEnd);
-    if (movesEnd && rightNeighbours.length > 0) {
-      const target = rightNeighbours[0];
-      const refs = [...rhythmGaps];
-      if (leftNeighbours.length > 0) {
-        const nearestLeft = leftNeighbours[leftNeighbours.length - 1];
-        const g = bboxStart - nearestLeft.end;
-        if (g > 1) refs.push(g);
-      }
-      let bestDelta = 0;
-      let bestAbs = threshold;
-      for (const g of refs) {
-        const candEnd = target.start - g;
-        // Don't let the snap drive the bbox below ~min width (4 world px).
-        if (candEnd <= bboxStart + 4) continue;
-        const d = candEnd - bboxEnd;
-        const ad = Math.abs(d);
-        if (ad < bestAbs) {
-          bestAbs = ad;
-          bestDelta = d;
-        }
-      }
-      if (bestAbs < threshold) {
-        if (isH) {
-          nw += bestDelta;
-          firedX = true;
-        } else {
-          nh += bestDelta;
-          firedY = true;
-        }
-      }
-    }
-    if (movesStart && leftNeighbours.length > 0) {
-      const target = leftNeighbours[leftNeighbours.length - 1];
-      const refs = [...rhythmGaps];
-      if (rightNeighbours.length > 0) {
-        const nearestRight = rightNeighbours[0];
-        const g = nearestRight.start - bboxEnd;
-        if (g > 1) refs.push(g);
-      }
-      let bestDelta = 0;
-      let bestAbs = threshold;
-      for (const g of refs) {
-        const candStart = target.end + g;
-        if (candStart >= bboxEnd - 4) continue;
-        const d = candStart - bboxStart;
-        const ad = Math.abs(d);
-        if (ad < bestAbs) {
-          bestAbs = ad;
-          bestDelta = d;
-        }
-      }
-      if (bestAbs < threshold) {
-        if (isH) {
-          nx += bestDelta;
-          nw -= bestDelta;
-          firedX = true;
-        } else {
-          ny += bestDelta;
-          nh -= bestDelta;
-          firedY = true;
-        }
-      }
-    }
-  }
-  return { x: nx, y: ny, w: nw, h: nh, firedX, firedY };
-}
-
-function computeResizeAlignSnap(
-  bbox: { x: number; y: number; w: number; h: number },
-  handle: Handle,
-  others: ShapeT[],
-  threshold: number,
-): { x: number; y: number; w: number; h: number; vx: number[]; hy: number[] } {
-  const movesLeft = handle === 'nw' || handle === 'w' || handle === 'sw';
-  const movesRight = handle === 'ne' || handle === 'e' || handle === 'se';
-  const movesTop = handle === 'nw' || handle === 'n' || handle === 'ne';
-  const movesBottom = handle === 'sw' || handle === 's' || handle === 'se';
-
-  const targetX: number[] = [];
-  const targetY: number[] = [];
-  for (const o of others) {
-    if (o.w === 0 && o.h === 0) continue;
-    if (o.rotation && Math.abs(o.rotation) > 0.01) continue;
-    targetX.push(o.x, o.x + o.w / 2, o.x + o.w);
-    targetY.push(o.y, o.y + o.h / 2, o.y + o.h);
-  }
-
-  const right = bbox.x + bbox.w;
-  const bottom = bbox.y + bbox.h;
-  let dLeft = 0;
-  let dRight = 0;
-  let dTop = 0;
-  let dBottom = 0;
-  let bestLeft = threshold;
-  let bestRight = threshold;
-  let bestTop = threshold;
-  let bestBottom = threshold;
-  if (movesLeft) {
-    for (const tx of targetX) {
-      const d = tx - bbox.x;
-      const abs = Math.abs(d);
-      if (abs <= bestLeft) { bestLeft = abs; dLeft = d; }
-    }
-  }
-  if (movesRight) {
-    for (const tx of targetX) {
-      const d = tx - right;
-      const abs = Math.abs(d);
-      if (abs <= bestRight) { bestRight = abs; dRight = d; }
-    }
-  }
-  if (movesTop) {
-    for (const ty of targetY) {
-      const d = ty - bbox.y;
-      const abs = Math.abs(d);
-      if (abs <= bestTop) { bestTop = abs; dTop = d; }
-    }
-  }
-  if (movesBottom) {
-    for (const ty of targetY) {
-      const d = ty - bottom;
-      const abs = Math.abs(d);
-      if (abs <= bestBottom) { bestBottom = abs; dBottom = d; }
-    }
-  }
-
-  const SNAP_EPS = 0.5;
-  let x = bbox.x;
-  let y = bbox.y;
-  let w = bbox.w;
-  let h = bbox.h;
-  const vx: number[] = [];
-  const hy: number[] = [];
-  if (movesLeft && bestLeft < threshold) {
-    const newLeft = bbox.x + dLeft;
-    w = right - newLeft;
-    x = newLeft;
-    for (const tx of targetX) {
-      if (Math.abs(tx - newLeft) < SNAP_EPS && !vx.includes(tx)) vx.push(tx);
-    }
-  } else if (movesRight && bestRight < threshold) {
-    const newRight = right + dRight;
-    w = newRight - bbox.x;
-    for (const tx of targetX) {
-      if (Math.abs(tx - newRight) < SNAP_EPS && !vx.includes(tx)) vx.push(tx);
-    }
-  }
-  if (movesTop && bestTop < threshold) {
-    const newTop = bbox.y + dTop;
-    h = bottom - newTop;
-    y = newTop;
-    for (const ty of targetY) {
-      if (Math.abs(ty - newTop) < SNAP_EPS && !hy.includes(ty)) hy.push(ty);
-    }
-  } else if (movesBottom && bestBottom < threshold) {
-    const newBottom = bottom + dBottom;
-    h = newBottom - bbox.y;
-    for (const ty of targetY) {
-      if (Math.abs(ty - newBottom) < SNAP_EPS && !hy.includes(ty)) hy.push(ty);
-    }
-  }
-  return { x, y, w, h, vx, hy };
+  return rotatedSnapBounds(box, s);
 }
 
 /** For a given resize handle, return the LOCAL-coord position of the
@@ -9904,113 +9163,4 @@ function oppositeAnchorLocal(
     case 'w':
       return { x: x + w, y: y + h / 2 };
   }
-}
-
-/** Screen-pixel snap threshold for snap-on-resize (Alt-held). 8px reads as
- *  a forgiving but unambiguous magnet - narrow enough that the user can
- *  still tune to any value within ~1 zoom-pixel, wide enough that a
- *  candidate the user is steering toward catches reliably. */
-const RESIZE_SIZE_SNAP_PX = 8;
-
-/** Pull a snap-target set out of the diagram for snap-on-resize. Each of
- *  width / height is collected as a deduped sorted array; small drift
- *  (sub-pixel rounding from earlier resizes) is collapsed by rounding to
- *  the nearest 0.5 world unit before dedup. Excludes the dragged shape(s)
- *  so a one-shape gesture can't snap to itself. */
-function collectSiblingSizes(
-  draggedId: string | null,
-  skipIds: { has(id: string): boolean } | undefined,
-): { widths: number[]; heights: number[] } {
-  const seenW = new Set<number>();
-  const seenH = new Set<number>();
-  const widths: number[] = [];
-  const heights: number[] = [];
-  const shapes = useEditor.getState().diagram.shapes;
-  for (const sh of shapes) {
-    if (sh.id === draggedId) continue;
-    if (skipIds?.has(sh.id)) continue;
-    const w = Math.round(Math.abs(sh.w) * 2) / 2;
-    const h = Math.round(Math.abs(sh.h) * 2) / 2;
-    if (w > 0 && !seenW.has(w)) {
-      seenW.add(w);
-      widths.push(w);
-    }
-    if (h > 0 && !seenH.has(h)) {
-      seenH.add(h);
-      heights.push(h);
-    }
-  }
-  return { widths, heights };
-}
-
-/** Find the candidate in `pool` closest to `value` (absolute distance) -
- * return it only if within `threshold`. null if pool is empty or no
- *  candidate is close enough. */
-function nearestWithinThreshold(
-  value: number,
-  pool: readonly number[],
-  threshold: number,
-): number | null {
-  let best: number | null = null;
-  let bestDist = threshold;
-  for (const c of pool) {
-    const d = Math.abs(value - c);
-    if (d <= bestDist) {
-      bestDist = d;
-      best = c;
-    }
-  }
-  return best;
-}
-
-/** Apply Alt-snap on resize: snap the dragged rect's w/h to the nearest
- *  sibling shape's w/h (independently per axis), re-anchoring to the
- *  fixed corner so the OPPOSITE side stays put. Operates in the same
- *  local frame as `applyHandleDrag` - no rotation handling here. Returns
- *  the rect unchanged when no candidate is within snap threshold. */
-function snapResizeToSiblingSizes(
-  next: { x: number; y: number; w: number; h: number },
-  startGeom: { x: number; y: number; w: number; h: number },
-  handle: 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w',
-  draggedId: string | null,
-  skipIds: { has(id: string): boolean } | undefined,
-  zoom: number,
-): { x: number; y: number; w: number; h: number } {
-  const threshold = RESIZE_SIZE_SNAP_PX / Math.max(0.01, zoom);
-  const { widths, heights } = collectSiblingSizes(draggedId, skipIds);
-  // Snap only the axes the dragged handle actually moves.
-  const movedW = handle !== 'n' && handle !== 's';
-  const movedH = handle !== 'e' && handle !== 'w';
-  let out = next;
-  if (movedW && widths.length > 0) {
-    const target = nearestWithinThreshold(Math.abs(out.w), widths, threshold);
-    if (target != null) {
-      const sign = out.w < 0 ? -1 : 1;
-      const snapped = sign * target;
-      // Fixed-side: handles touching the LEFT edge keep the right side
-      // pinned; handles touching the RIGHT edge keep the left side pinned.
-      const fixRight = handle === 'nw' || handle === 'sw' || handle === 'w';
-      const fixedX = fixRight ? startGeom.x + startGeom.w : startGeom.x;
-      out = {
-        ...out,
-        w: snapped,
-        x: fixRight ? fixedX - snapped : fixedX,
-      };
-    }
-  }
-  if (movedH && heights.length > 0) {
-    const target = nearestWithinThreshold(Math.abs(out.h), heights, threshold);
-    if (target != null) {
-      const sign = out.h < 0 ? -1 : 1;
-      const snapped = sign * target;
-      const fixBottom = handle === 'nw' || handle === 'ne' || handle === 'n';
-      const fixedY = fixBottom ? startGeom.y + startGeom.h : startGeom.y;
-      out = {
-        ...out,
-        h: snapped,
-        y: fixBottom ? fixedY - snapped : fixedY,
-      };
-    }
-  }
-  return out;
 }

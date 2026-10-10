@@ -2,6 +2,36 @@
 
 Detailed notes on shapes, exports and saving. For an overview, see the [README](./README.md).
 
+## Selecting and arranging objects
+
+Selecting several objects opens a shared inspector with the selection count and
+object types. Properties with different values show **Mixed**. Choosing a value
+applies it to the selection in one undo step; resetting a property restores each
+object's own default. Individual labels and other object-specific fields remain
+in the single-object inspector.
+
+In **Arrange**, choose **Side by side** or **Stack vertically** to put two or
+more shapes together in an evenly spaced row or column. **Gap between shapes**
+sets the distance between their edges (24 px by default). Shapes keep their sizes
+and spatial order; rotated shapes get enough room too. Hover or keyboard-focus a
+layout to see destination outlines on the canvas, then click to apply it. Escape
+dismisses the preview. The confirmation includes **Undo**.
+
+Open **Align edges & match size** for precise adjustments. Edge and centre
+alignment moves shapes along one axis and can produce overlaps. With three or
+more shapes, **Horizontal gaps** and **Vertical gaps** equalize spacing while
+keeping the outermost shapes in place. **Width**, **Height**, and **Both** match
+sizes to the first selected shape, identified above the buttons. A selected group
+or container moves with its contents, even if its children are also selected.
+Size matching preserves icon aspect ratios, text height requirements, and the
+space needed for container contents, so constrained shapes may not match both
+dimensions exactly. Each arrangement is one undo step.
+
+While moving or resizing shapes, drawing or adjusting connectors, or dragging a
+selection rectangle, hold the pointer near a canvas edge to pan automatically.
+The drag continues while the pointer is stationary. Move back into the canvas
+interior or release the pointer to stop panning.
+
 ## Native UML, BPMN and flowcharts
 
 Open the library (`S`), select **Shapes**, then choose **UML**, **BPMN** or **Flowchart**.
@@ -127,4 +157,3 @@ remain unsaved until a later write includes them. Autosave requires a file handl
 a restored browser session must reopen its file or use Save As to establish one.
 When a browser supports only download links, Vellum starts a download and retains
 the unsaved indicator because that API cannot confirm completion or cancellation.
-

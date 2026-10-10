@@ -24,6 +24,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, newId } from '@/store/editor';
+import { getContainerAnchor } from '@/store/hierarchy';
 import { resolveIcon } from '@/icons/resolve';
 import type { IconDragPayload } from '@/icons/types';
 import type { Shape } from '@/store/types';
@@ -184,34 +185,35 @@ export function ContainerIconFlyout({ target, anchor, onClose }: Props) {
       // (this is the double-click-the-icon flow), ADD otherwise (the +
       // affordance on an empty container). Replace-in-place preserves
       // the existing icon's id, position, size, and any per-shape
-      // overrides the user has set - only the iconSvg + attribution +
-      // constraints change. That keeps connectors bound to the icon
+      // overrides the user has set. An image anchor becomes an SVG icon
+      // in place. That keeps connectors bound to the icon
       // intact and avoids re-laying-out the container's interior just
       // because the user wanted to swap the glyph.
-      if (container.anchorId) {
-        const existing = state.diagram.shapes.find(
-          (s) => s.id === container.anchorId,
-        );
-        if (existing && existing.kind === 'icon') {
-          // Tint and recolour mode survive the swap - see the icon-target
-          // path above for why the old vendor-lock wipe is gone.
-          state.updateShape(existing.id, {
-            iconSvg: resolved.svg,
-            iconAttribution: resolved.attribution,
-            iconConstraints: resolved.constraints,
-          });
-          // Skip the recordRecent at the bottom of `pick` for replace -
-          // the user is iterating on a single container, not adopting
-          // a new icon onto the canvas, so polluting the Recent feed
-          // with every iteration would be noise.
-          onClose();
-          setBusy(false);
-          return;
-        }
-        // Anchor pointed at something we can't repaint (deleted, or a
-        // non-icon shape). Fall through to ADD so the user gets a
-        // working result instead of a silent no-op.
+      const existing = getContainerAnchor(container, state.diagram.shapes);
+      if (existing) {
+        // Icon tint and recolour mode survive the swap - see the icon-target
+        // path above for why the old vendor-lock wipe is gone.
+        state.updateShape(existing.id, {
+          kind: 'icon',
+          ...(existing.kind === 'image' ? {
+            src: undefined,
+            imageFilter: undefined,
+            imageTint: undefined,
+            frameAspectRatio: undefined,
+          } : {}),
+          iconSvg: resolved.svg,
+          iconAttribution: resolved.attribution,
+          iconConstraints: resolved.constraints,
+        });
+        // Skip the recordRecent at the bottom of `pick` for replace -
+        // the user is iterating on a single container, not adopting
+        // a new icon onto the canvas, so polluting the Recent feed
+        // with every iteration would be noise.
+        onClose();
+        setBusy(false);
+        return;
       }
+      // A missing, released, or unsupported anchor falls through to ADD.
 
       // Match `makeContainer` (in store/editor.ts) so the visual result of
       // "+ icon → flyout" is identical to "icon already on canvas →

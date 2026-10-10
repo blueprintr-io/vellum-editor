@@ -74,7 +74,8 @@ test('YAML dialog Apply changes the current tab and undo restores it', async ({ 
     store.getState().newDiagram();
   });
   await page.getByTitle('Menu', { exact: true }).click();
-  await page.getByText('View/Edit as YAML', { exact: true }).click();
+  await page.getByRole('button', { name: 'YAML Inspector', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit YAML', exact: true }).click();
   await page.locator('textarea').fill('version: "1.0"\nmeta:\n  title: Applied YAML\nshapes: []\nconnectors: []\nannotations: []\n');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__VELLUM_TEST__!.modules['/src/store/editor.ts'].useEditor.getState().diagram.meta.title)).toBe('Applied YAML');

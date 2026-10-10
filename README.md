@@ -77,6 +77,12 @@ connectors:
   # anchors, routing, waypoints and markers for each connector
 ```
 
+Open **Menu → YAML Inspector** to browse the source in a resizable panel on
+the right. Selecting a shape or connector reveals and highlights its YAML;
+clicking an object's YAML selects it on the canvas. The source updates as you
+edit the diagram. Switch between **This tab** and **Whole project**, or use
+**Edit YAML** to open the editor and apply changes.
+
 Edges are `->` (arrow), `--` (plain line) or `<->` (double-headed). The section
 is editable. Deleting a line deletes that connector, adding a line creates one,
 and naming a node that does not exist creates it, so you can type a diagram as

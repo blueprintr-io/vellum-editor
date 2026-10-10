@@ -123,7 +123,7 @@ export function prismGradientId(
 }
 
 /** Kind-only gate - used at CREATION time (defaultShapeFromTool / insert.ts)
- *  where `frame` doesn't exist yet, so icons return false. */
+ *  where `frame` doesn't exist yet, so icons and images return false. */
 export function shapeKindSupportsPrismStroke(kind: Shape['kind']): boolean {
   switch (kind) {
     case 'rect':
@@ -138,11 +138,10 @@ export function shapeKindSupportsPrismStroke(kind: Shape['kind']): boolean {
     case 'text':
       return true;
     // group  → paints stroke="none"; there is no outline to gradient.
-    // image  → paints no outline for an actual bitmap.
     // note   → hard-codes var(--note-ink) at width 1.1 and ignores
     //          shape.stroke entirely; brown ink on yellow paper IS the
     //          sticky-note's identity.
-    // icon   → only when framed. See shapeSupportsPrismStroke.
+    // icon / image → only when framed. See shapeSupportsPrismStroke.
     default:
       return false;
   }
@@ -151,7 +150,7 @@ export function shapeKindSupportsPrismStroke(kind: Shape['kind']): boolean {
 /** THE gate. The renderer and the inspector both call this, so the panel can
  *  never offer a control that would silently paint nothing. */
 export function shapeSupportsPrismStroke(shape: Shape): boolean {
-  if (shape.kind === 'icon') return shape.frame !== undefined;
+  if (shape.kind === 'icon' || shape.kind === 'image') return shape.frame !== undefined;
   return shapeKindSupportsPrismStroke(shape.kind);
 }
 

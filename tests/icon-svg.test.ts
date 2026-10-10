@@ -41,3 +41,49 @@ test('non-SVG input is rejected', () => {
   assert.equal(parseIconSvg('<div>not an svg</div>'), null);
   assert.equal(parseIconSvg(''), null);
 });
+
+test('unchanged icon instances reuse parsing while markup and scope changes stay fresh', (t) => {
+  const parse = t.mock.method(DOMParser.prototype, 'parseFromString');
+  const markup = '<svg viewBox="0 0 24 24"><defs><linearGradient id="paint"/></defs><rect fill="url(#paint)"/></svg>';
+  const first = parseIconSvg(markup, 'cache-first')!;
+  assert.equal(parseIconSvg(markup, 'cache-first'), first);
+  assert.equal(parse.mock.callCount(), 1);
+
+  const second = parseIconSvg(markup, 'cache-second')!;
+  assert.match(first.inner, /url\(#cache-first__i__paint\)/);
+  assert.match(second.inner, /url\(#cache-second__i__paint\)/);
+  assert.equal(parse.mock.callCount(), 2);
+
+  const changed = parseIconSvg(markup.replace('24 24', '48 48'), 'cache-first')!;
+  assert.equal(changed.viewBox, '0 0 48 48');
+  assert.equal(parse.mock.callCount(), 3);
+  assert.equal(parseIconSvg('<div>replaced artwork</div>', 'cache-first'), null);
+  assert.equal(parseIconSvg(markup, 'cache-first')!.viewBox, '0 0 24 24');
+});
+
+test('icon parse cache evicts old instances and keeps recently used ones', (t) => {
+  const parse = t.mock.method(DOMParser.prototype, 'parseFromString');
+  const markup = '<svg><path d="M0 0L1 1"/></svg>';
+  parseIconSvg(markup, 'evict-oldest');
+  const recent = parseIconSvg(markup, 'evict-recent');
+  for (let i = 0; i < 512; i++) {
+    parseIconSvg(markup, `evict-fill-${i}`);
+    if (i === 255) parseIconSvg(markup, 'evict-recent');
+  }
+  const calls = parse.mock.callCount();
+  assert.equal(parseIconSvg(markup, 'evict-recent'), recent);
+  assert.equal(parse.mock.callCount(), calls);
+  assert.deepEqual(parseIconSvg(markup, 'evict-oldest'), recent);
+  assert.equal(parse.mock.callCount(), calls + 1);
+});
+
+test('large SVG markup also evicts cached strings before the entry limit', (t) => {
+  const parse = t.mock.method(DOMParser.prototype, 'parseFromString');
+  const markup = `<svg><text>${'x'.repeat(600_000)}</text></svg>`;
+  parseIconSvg(markup, 'large-first');
+  const second = parseIconSvg(markup, 'large-second');
+  assert.equal(parseIconSvg(markup, 'large-second'), second);
+  assert.equal(parse.mock.callCount(), 2);
+  parseIconSvg(markup, 'large-first');
+  assert.equal(parse.mock.callCount(), 3);
+});

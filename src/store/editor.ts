@@ -1,4 +1,5 @@
 import { captureFragment, fragmentBounds, remapFragment, type DiagramFragment } from './fragments';
+import { planArrange, type ArrangeCommand, type ArrangeOptions } from './arrange';
 import { syncRacks, clearRackUnit, clearRackChild, isRackChild, swapRackUnitPositions, assignRackUnitIcon, rackUnitMaxSpan, rackUnitSpan, rackUnitSpanPatch, rackUnitDevicePatch, rackDeviceOptionPatch } from '@/editor/rack/model';
 import { rackDeviceSpec, type RackModuleType, type RackOptionValue } from '@/editor/rack/devices';
 import { syncBoundaryEvents, isBpmnActivity, hiddenByCollapsedAncestor } from '@/editor/notation/model';
@@ -743,6 +744,9 @@ export type EditorState = {
    *  nudge does, and commits ONE history step for the edit. Omitted
    *  keys are left alone, so each field commits independently. */
   setShapeBox: (id: string, box: BoxEdit) => void;
+  /** Arrange visible selection roots, preserving descendants and connector
+   * geometry, as one undoable edit. Size matching uses the first root. */
+  arrangeSelection: (command: ArrangeCommand, options?: ArrangeOptions) => void;
   updateShapeLive: (id: string, patch: Partial<Shape>) => void;
   updateShapesLive: (patches: { id: string; patch: Partial<Shape> }[]) => void;
   /** Like updateShapeLive but BYPASSES the text-shape autoFit. Used during
@@ -765,7 +769,7 @@ export type EditorState = {
    *    - For an icon that isn't recolorable (vendor or multi-colour iconify),
    *      colour patches are dropped - the asset's licence forbids tinting,
    *      and silently noop'ing is right.
-   *    - For images, only `opacity` + `imageFilter` apply.
+   *    - Bare images drop fill/stroke; framed images style their frame.
    *    - For connectors, `stroke`, `strokeWidth`, `opacity` apply directly;
    *      `strokeStyle` (the shape field) maps to connector `style`. Other
    *      fields are dropped - connectors don't have fill or fonts.
@@ -1019,13 +1023,14 @@ export type EditorState = {
   // container actions - wrap a selected non-basic shape in a container frame
   // so the user can group related items below/around it.
   makeContainer: (id: string) => void;
-  /** Encapsulate EVERY selected icon shape inside its own circle/square that
+  /** Encapsulate EVERY selected icon or image inside its own circle/square that
    *  becomes that shape's own outline (NOT a group/container - same ids, no
-   *  parent; each icon is framed independently around its own centre). Pass
-   *  `null` to strip the frame back to bare icons. Squares each bbox so the
+   *  parent; each shape is framed independently around its own centre). Pass
+   *  `null` to strip the frame back to bare artwork. Squares each bbox so the
    *  frames stay regular and connectors anchor to clean circles/boxes. Acts
    *  on the current selection (mirrors `updateSelection`), so it works for
-   *  one or many icons in a single history step. */
+   *  one or many images/icons in a single history step. Image proportions are
+   *  remembered while framed and restored on removal. */
   encapsulateSelection: (frame: 'circle' | 'square' | null) => void;
   /** Auto-adopt a freshly-dropped shape into the topmost container its centre
    *  lands inside. No-op if the shape is already a child or no container is
@@ -1341,6 +1346,9 @@ function _translateShapePatch(
     return out;
   }
   if (sh.kind === 'image') {
+    // Framed images have a real body fill/outline. Their imageFilter and
+    // imageTint still apply only to the artwork inside it.
+    if (sh.frame !== undefined) return patch;
     // Same shape as the icon branch - forward non-colour fields as-is so
     // multi-select label/anchor edits reach images, and drop fill/stroke
     // (images don't have a body fill/stroke axis the inspector writes to).
@@ -3002,6 +3010,21 @@ export const useEditor = create<EditorState>()(
             set((s) => ({ lastStyles: { ...s.lastStyles, ...sticky } }));
           }
         },
+        arrangeSelection: (command, options) => {
+          const state = get();
+          if (state.readOnly) return;
+          const plan = planArrange(state.diagram.shapes, state.diagram.connectors,
+            state.selectedIds, command, state.layerMode, options);
+          if (plan.patches.length === 0 && plan.connectors === state.diagram.connectors) return;
+          const patches = new Map(plan.patches.map((entry) => [entry.id, entry.patch]));
+          const nextShapes = state.diagram.shapes.map((shape) => {
+            const patch = patches.get(shape.id);
+            return patch ? applyTextAutoFit(applyManualFontSizeOnFit({ ...shape, ...patch }, patch)) : shape;
+          });
+          _snapshot();
+          _mutate({ shapes: nextShapes, connectors: plan.connectors });
+          _reconcileConnectorParents();
+        },
         setShapeBox: (id, box) => {
           const all = get().diagram.shapes;
           const target = all.find((sh) => sh.id === id);
@@ -4655,15 +4678,17 @@ export const useEditor = create<EditorState>()(
 
         encapsulateSelection: (frame) => {
           const st = get();
-          // Only icon-kind shapes in the current selection. A mixed
-          // marquee (icons + a rectangle, say) just frames the icons and
+          // Only icons and images in the current selection. A mixed
+          // marquee (artwork + a rectangle, say) just frames the artwork and
           // leaves the rest untouched - same forgiving contract as the
           // style actions.
           const targetIds = new Set(
-            st.selectedIds.filter(
-              (sid) =>
-                st.diagram.shapes.find((s) => s.id === sid)?.kind === 'icon',
-            ),
+            st.diagram.shapes.filter((s) =>
+              st.selectedIds.includes(s.id) &&
+              (s.kind === 'icon' || s.kind === 'image') &&
+              Number.isFinite(s.w) && s.w > 0 && Number.isFinite(s.h) && s.h > 0 &&
+              (s.frame ?? null) !== frame,
+            ).map((s) => s.id),
           );
           if (targetIds.size === 0) return;
           _snapshot();
@@ -4671,8 +4696,28 @@ export const useEditor = create<EditorState>()(
             diagram: {
               ...s.diagram,
               shapes: s.diagram.shapes.map((x) => {
-                if (!targetIds.has(x.id) || x.kind !== 'icon') return x;
+                if (!targetIds.has(x.id)) return x;
+                const cx = x.x + x.w / 2;
+                const cy = x.y + x.h / 2;
+                const side = x.kind === 'image' ? Math.max(x.w, x.h) : Math.round(Math.max(x.w, x.h));
                 if (frame === null) {
+                  if (x.kind === 'image') {
+                    // Keep the size chosen while framed, restoring the
+                    // image's original proportions around the same centre.
+                    const savedRatio = x.frameAspectRatio ?? 1;
+                    const ratio = Number.isFinite(savedRatio) && savedRatio > 0 ? savedRatio : 1;
+                    const w = ratio >= 1 ? side : side * ratio;
+                    const h = ratio >= 1 ? side / ratio : side;
+                    return {
+                      ...x,
+                      frame: undefined,
+                      frameAspectRatio: undefined,
+                      x: cx - w / 2,
+                      y: cy - h / 2,
+                      w,
+                      h,
+                    };
+                  }
                   // Strip back to a bare icon. The (squared) bbox is left
                   // as-is on purpose: the icon simply fills the square it
                   // had - re-deriving the pre-encapsulation size would
@@ -4680,23 +4725,20 @@ export const useEditor = create<EditorState>()(
                   // in-place unwrap is less surprising than a size jump.
                   return { ...x, frame: undefined };
                 }
-                // Each icon is framed INDEPENDENTLY around its own centre
-                // - many selected icons → many separate framed shapes
-                // (this is the per-shape encapsulate, never a shared
-                // group). Square the bbox so the circle/square is regular
-                // (rx == ry, w == h) and connectors anchor to a clean
-                // outline. Match the icon's EXISTING footprint (its
-                // larger side) - do NOT grow it; the renderer insets the
-                // glyph to ~0.6·S so the on-canvas size is unchanged (a
-                // square icon's bbox is untouched entirely).
-                const cx = x.x + x.w / 2;
-                const cy = x.y + x.h / 2;
-                const side = Math.round(Math.max(x.w, x.h));
+                // Each shape keeps its centre and largest dimension. The
+                // renderer fits artwork inside the resulting square frame.
+                // Remember image proportions only on the first wrap so a
+                // circle → square switch cannot overwrite them with 1:1.
                 return {
                   ...x,
                   frame,
-                  x: Math.round(cx - side / 2),
-                  y: Math.round(cy - side / 2),
+                  ...(x.kind === 'image' ? {
+                    frameAspectRatio: x.frame ? x.frameAspectRatio : (
+                      Number.isFinite(x.w / x.h) && x.w / x.h > 0 ? x.w / x.h : 1
+                    ),
+                  } : {}),
+                  x: x.kind === 'image' ? cx - side / 2 : Math.round(cx - side / 2),
+                  y: x.kind === 'image' ? cy - side / 2 : Math.round(cy - side / 2),
                   w: side,
                   h: side,
                 };
@@ -4704,7 +4746,7 @@ export const useEditor = create<EditorState>()(
             },
             dirty: true,
             // Selection preserved (don't collapse a multi-select to one) -
-            // the user keeps every icon they framed selected.
+            // the user keeps every shape they framed selected.
           }));
         },
 

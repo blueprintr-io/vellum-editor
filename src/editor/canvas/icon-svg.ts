@@ -1,3 +1,22 @@
+type ParsedIconSvg = Readonly<{
+  inner: string;
+  viewBox: string | null;
+  width: number;
+  height: number;
+}>;
+
+// Geometry changes leave the artwork untouched. Keep the latest parse per
+// instance so dragging icons does not repeatedly build and rewrite a DOM.
+// Bound both entries and strings retained across document changes.
+const MAX_CACHED_ICONS = 512;
+const MAX_CACHED_CHARACTERS = 2 * 1024 * 1024;
+const parsedIcons = new Map<string, {
+  markup: string;
+  parsed: ParsedIconSvg | null;
+  characters: number;
+}>();
+let cachedCharacters = 0;
+
 /** Parse sanitized SVG without treating quoted attribute values as markup.
  * Canvas icons and rack units use the same parser. Serializing DOM children
  * preserves text/attribute escaping before the caller inserts the fragment.
@@ -6,12 +25,40 @@
 export function parseIconSvg(
   markup: string,
   instanceScope?: string,
-): {
-  inner: string;
-  viewBox: string | null;
-  width: number;
-  height: number;
-} | null {
+): ParsedIconSvg | null {
+  const key = instanceScope ?? '';
+  const cached = parsedIcons.get(key);
+  if (cached?.markup === markup) {
+    // Refresh insertion order so eviction keeps recently rendered icons.
+    parsedIcons.delete(key);
+    parsedIcons.set(key, cached);
+    return cached.parsed;
+  }
+  const parsed = parseUncachedIconSvg(markup, instanceScope);
+  if (cached) {
+    parsedIcons.delete(key);
+    cachedCharacters -= cached.characters;
+  }
+  const characters = markup.length + (parsed?.inner.length ?? 0);
+  if (characters <= MAX_CACHED_CHARACTERS) {
+    while (
+      parsedIcons.size >= MAX_CACHED_ICONS ||
+      cachedCharacters + characters > MAX_CACHED_CHARACTERS
+    ) {
+      const oldest = parsedIcons.keys().next().value!;
+      cachedCharacters -= parsedIcons.get(oldest)!.characters;
+      parsedIcons.delete(oldest);
+    }
+    parsedIcons.set(key, { markup, parsed, characters });
+    cachedCharacters += characters;
+  }
+  return parsed;
+}
+
+function parseUncachedIconSvg(
+  markup: string,
+  instanceScope?: string,
+): ParsedIconSvg | null {
   const doc = new DOMParser().parseFromString(markup, 'text/html');
   const svg = doc.body.firstElementChild;
   if (svg?.localName !== 'svg' || svg.namespaceURI !== 'http://www.w3.org/2000/svg') return null;

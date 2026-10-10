@@ -15,7 +15,6 @@ import {
 } from '../files';
 import { MermaidImportDialog } from './MermaidImportDialog';
 import { DrawioImportDialog } from './DrawioImportDialog';
-import { YamlDialog } from './YamlDialog';
 import type { DrawioPage } from '@/lib/drawio';
 import { I } from './icons';
 import { PluginSlot, usePlugins } from '@/plugins/PluginProvider';
@@ -25,7 +24,7 @@ import { hasShellCaptionStrip, isMac } from '@/lib/runtime';
 /** Top-right action cluster: theme toggle, share, publish (primary), menu.
  *  The Publish button uses bg-accent-deep + text-white - DO NOT use text-chalk
  *  on accent backgrounds (a known Blueprintr light-mode contrast bug). */
-export function Actions() {
+export function Actions({ onOpenYamlInspector }: { onOpenYamlInspector: () => void }) {
   const theme = useEditor((s) => s.theme);
   const toggleTheme = useEditor((s) => s.toggleTheme);
 
@@ -66,7 +65,7 @@ export function Actions() {
       >
         {theme === 'light' ? <I.themeLight /> : <I.themeDark />}
       </ChromeButton>
-      <MenuButton />
+      <MenuButton onOpenYamlInspector={onOpenYamlInspector} />
     </div>
   );
 }
@@ -165,11 +164,10 @@ function CopyPngButton() {
 /** The hamburger ⨯ file menu. Opens on click; closes on outside click or Esc.
  *  Items are simple buttons that delegate to the file-action helpers (which
  *  share their plumbing with the keybinding handler). */
-function MenuButton() {
+function MenuButton({ onOpenYamlInspector }: { onOpenYamlInspector: () => void }) {
   const [open, setOpen] = useState(false);
   // The menu opens Settings, so its open state stays local to this component.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [yamlOpen, setYamlOpen] = useState(false);
   const [mermaidOpen, setMermaidOpen] = useState(false);
   // Multi-tab draw.io picker. Holds the page list AND the resolver for
   // the Promise that `handleImportDrawio` is awaiting; closing the
@@ -258,7 +256,7 @@ function MenuButton() {
           {sep}
           {item('Save', `${meta}S`, handleSave)}
           {item('Save As…', `⇧${meta}S`, handleSaveAs)}
-          {item('View/Edit as YAML', null, () => setYamlOpen(true))}
+          {item('YAML Inspector', null, onOpenYamlInspector)}
           {item('Copy as PNG', `⇧${meta}C`, () => handleCopyPng({}))}
           {item('Export image…', null, () => setSaveDialogOpen(true, 'image'))}
           {sep}
@@ -312,7 +310,6 @@ function MenuButton() {
       {settingsOpen && (
         <SettingsDialog onClose={() => setSettingsOpen(false)} />
       )}
-      {yamlOpen && <YamlDialog onClose={() => setYamlOpen(false)} />}
       {mermaidOpen && (
         <MermaidImportDialog onClose={() => setMermaidOpen(false)} />
       )}

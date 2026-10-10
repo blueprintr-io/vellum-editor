@@ -29,14 +29,19 @@ import {
 
 type Props = {
   conn: ConnectorT;
-  shapes: Shape[];
+  // Only endpoint shapes affect routing. Keeping their identities separate
+  // lets memo skip this connector when an unrelated shape moves.
+  fromShape?: Shape;
+  toShape?: Shape;
+  /** Async icon silhouettes change anchors without replacing a shape. */
+  silhouetteRevision: number;
   selected: boolean;
   /** Line-jump bridges per stroke (see line-jumps.ts). The canvas works them
    *  out because they depend on every other connector. */
   hops?: ConnectorHops;
 };
 
-function ConnectorImpl({ conn, shapes, selected, hops }: Props) {
+function ConnectorImpl({ conn, fromShape, toShape, selected, hops }: Props) {
   // Suppress the rendered label while the inline editor overlays this
   // connector - otherwise the editor's transparent background would show
   // the committed label painted underneath, ghosting the cursor.
@@ -57,7 +62,7 @@ function ConnectorImpl({ conn, shapes, selected, hops }: Props) {
 
   const path = resolveConnectorPath(
     conn,
-    shapes,
+    [fromShape, toShape].filter((shape): shape is Shape => shape !== undefined),
     markerSetback(fromMarker, fromFloating, strokeWidth),
     markerSetback(toMarker, toFloating, strokeWidth),
   );

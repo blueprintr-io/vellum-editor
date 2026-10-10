@@ -8,6 +8,20 @@
 
 import type { Shape } from './types';
 
+/** A container's chosen icon may be SVG artwork or a pasted image. Only
+ *  the explicit pin counts; ordinary children and stale pins are ignored. */
+export function getContainerAnchor(
+  container: Shape | null | undefined,
+  shapes: readonly Shape[],
+): Shape | null {
+  if (container?.kind !== 'container' || !container.anchorId) return null;
+  const anchor = shapes.find((shape) => shape.id === container.anchorId);
+  return anchor && anchor.parent === container.id &&
+    (anchor.kind === 'icon' || anchor.kind === 'image')
+    ? anchor
+    : null;
+}
+
 /** Expand a set of shape ids to include every descendant - every parent
  *  kind (groups, containers). Used by deleteSelection, paste, layer
  *  moves, z-order moves, and any mutation whose semantics are "treat the

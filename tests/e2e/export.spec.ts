@@ -199,6 +199,164 @@ test('selection-only export crops to the selected shapes and their connector', a
   expect(r.width).toBeLessThan(360);
 });
 
+async function seedCompactSelection(page: Page) {
+  await seed(page);
+  await page.evaluate(() => {
+    const { useEditor } = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
+    const st = useEditor.getState();
+    st.loadDiagram({
+      version: '1.0', meta: { title: 'Compact selection' },
+      shapes: [
+        { id: 'frame', kind: 'container', x: 120, y: 140, w: 160, h: 100,
+          layer: 'blueprint', label: 'Frame', labelAnchor: 'top-left', stroke: '#000000' },
+        { id: 'child', kind: 'rect', x: 155, y: 175, w: 70, h: 40,
+          layer: 'blueprint', parent: 'frame', fill: '#ff0000', stroke: '#000000' },
+        { id: 'peer', kind: 'rect', x: 360, y: 175, w: 80, h: 50,
+          layer: 'blueprint', rotation: 25, fill: '#0000ff', stroke: '#000000' },
+        { id: 'excluded', kind: 'rect', x: 1800, y: 1200, w: 300, h: 300,
+          layer: 'blueprint', fill: '#00ff00' },
+      ],
+      connectors: [{ id: 'link', from: { shape: 'child', anchor: 'right' },
+        to: { shape: 'peer', anchor: 'left' }, routing: 'straight', layer: 'blueprint' }],
+      annotations: [],
+    }, null);
+    st.setPan({ x: 0, y: 0 });
+    st.setZoom(1);
+    st.setSelected(['frame', 'peer']);
+    st.setExportPrefs({ scale: 1, padding: 24, background: 'white', includeGrid: false });
+    useEditor.setState({ inspectorOpen: false, libraryPanelOpen: false });
+  });
+  await page.locator('[data-shape-id="frame"]').waitFor();
+}
+
+/** Exercise the actual right-click action, then inspect the encoded clipboard
+ *  image rather than the exporter's dimensions or SVG geometry alone. */
+async function copySelectionPng(page: Page) {
+  await page.evaluate(() => navigator.clipboard.writeText('pending PNG'));
+  const click = await page.evaluate(() => {
+    const frame = document.querySelector<SVGGElement>('[data-shape-id="frame"]')!;
+    const p = new DOMPoint(130, 225).matrixTransform(frame.getScreenCTM()!);
+    return { x: p.x, y: p.y };
+  });
+  await page.mouse.click(click.x, click.y, { button: 'right' });
+  await page.getByRole('button', { name: 'Copy as PNG' }).click();
+  await expect.poll(async () => page.evaluate(async () =>
+    (await navigator.clipboard.read()).flatMap((item) => item.types),
+  )).toContain('image/png');
+  return page.evaluate(async () => {
+    const item = (await navigator.clipboard.read()).find((entry) => entry.types.includes('image/png'))!;
+    const bitmap = await createImageBitmap(await item.getType('image/png'));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(bitmap, 0, 0);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let left = canvas.width, top = canvas.height, right = -1, bottom = -1;
+    let red = 0, blue = 0, green = 0;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        const [r, g, b, a] = data.subarray(i, i + 4);
+        if (a > 0 && Math.min(r, g, b) < 240) {
+          left = Math.min(left, x); top = Math.min(top, y);
+          right = Math.max(right, x); bottom = Math.max(bottom, y);
+        }
+        if (r > 240 && g < 20 && b < 20) red++;
+        if (b > 240 && r < 20 && g < 20) blue++;
+        if (g > 240 && r < 20 && b < 20) green++;
+      }
+    }
+    bitmap.close();
+    return { width: canvas.width, height: canvas.height,
+      margins: [left, top, canvas.width - right - 1, canvas.height - bottom - 1], red, blue, green };
+  });
+}
+
+test('context-menu PNG keeps a labeled multi-selection tightly cropped at every zoom', async ({ page }) => {
+  await seedCompactSelection(page);
+  const copies = [];
+  for (const zoom of [0.5, 2]) {
+    await setView(page, zoom);
+    const png = await copySelectionPng(page);
+    expect(png.width).toBeGreaterThan(350);
+    expect(png.width).toBeLessThan(420);
+    expect(png.height).toBeLessThan(180);
+    // Configured 24px padding, plus stroke/antialiasing bleed only.
+    for (const margin of png.margins) {
+      expect(margin).toBeGreaterThanOrEqual(24);
+      expect(margin).toBeLessThanOrEqual(32);
+    }
+    expect(png.red).toBeGreaterThan(2000); // Selected container's child.
+    expect(png.blue).toBeGreaterThan(3000); // Rotated selected sibling.
+    expect(png.green).toBe(0); // Distant unselected shape.
+    copies.push([png.width, png.height]);
+  }
+  expect(copies[1]).toEqual(copies[0]);
+});
+
+test('context-menu PNG preserves a long label outside its container without blank margins', async ({ page }) => {
+  await seedCompactSelection(page);
+  await page.evaluate(() => {
+    const { useEditor } = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
+    useEditor.getState().updateShape('frame', {
+      label: 'Long outside label '.repeat(5).trim(), labelAnchor: 'right',
+      fontSize: 28, fontFamily: 'monospace', textColor: '#000000',
+    });
+    useEditor.getState().setSelected(['frame']);
+  });
+  const labelWidth = await page.locator('[data-shape-id="frame"] foreignObject div').evaluate((div) => {
+    const range = document.createRange();
+    range.selectNodeContents(div);
+    return range.getBoundingClientRect().width;
+  });
+  expect(labelWidth).toBeGreaterThan(600);
+  const liveLabel = await page.locator('[data-shape-id="frame"] foreignObject').evaluate((el) => el.outerHTML);
+  const liveTheme = await page.locator('html').getAttribute('class');
+  const png = await copySelectionPng(page);
+  // 160px frame + 6px label gap + the entire visible label + padding.
+  expect(png.width).toBeGreaterThan(160 + 6 + labelWidth + 48);
+  expect(png.width).toBeLessThan(160 + 6 + labelWidth + 70);
+  for (const margin of png.margins) {
+    expect(margin).toBeGreaterThanOrEqual(24);
+    expect(margin).toBeLessThanOrEqual(32);
+  }
+  expect(png.red).toBeGreaterThan(2000);
+  expect(png.blue).toBe(0);
+  expect(png.green).toBe(0);
+  await expect(page.locator('[data-vellum-export-measure]')).toHaveCount(0);
+  expect(await page.locator('[data-shape-id="frame"] foreignObject').evaluate((el) => el.outerHTML)).toBe(liveLabel);
+  expect(await page.locator('html').getAttribute('class')).toBe(liveTheme);
+});
+
+test('clipped table-cell overflow does not enlarge the exported PNG', async ({ page }) => {
+  await seed(page);
+  await page.evaluate(() => {
+    const { useEditor } = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
+    useEditor.getState().loadDiagram({
+      version: '1.0', meta: { title: 'Clipped table text' },
+      shapes: [{ id: 'table', kind: 'table', x: 100, y: 100, w: 200, h: 80,
+        layer: 'blueprint', rows: 1, cols: 1, cells: [[{ text: 'Short' }]] }],
+      connectors: [], annotations: [],
+    }, null);
+  });
+  const cell = page.locator('[data-shape-id="table"] foreignObject');
+  await expect(cell).toContainText('Short');
+  const short = await raster(page, { format: 'png', scale: 1, padding: 24 });
+  await page.evaluate(() => {
+    const { useEditor } = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'];
+    useEditor.getState().updateShape('table', {
+      cells: [[{ text: 'Overflowing text\n'.repeat(40) + 'Last line' }]],
+    });
+  });
+  await expect(cell).toContainText('Last line');
+  const overflowing = await raster(page, { format: 'png', scale: 1, padding: 24 });
+  expect([overflowing.width, overflowing.height]).toEqual([short.width, short.height]);
+  // Includes padding, stroke bleed and the table's existing hover bounds.
+  expect(overflowing.width).toBeLessThanOrEqual(320);
+  expect(overflowing.height).toBeLessThanOrEqual(200);
+});
+
 test('export dialog: live preview, scale readout, Save downloads, Copy hits the clipboard', async ({ page }) => {
   await seed(page);
   await page.evaluate(async () => {

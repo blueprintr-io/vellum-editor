@@ -7,6 +7,7 @@ import { calloutTextBox } from '@/editor/notation/geometry';
 import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { Shape as ShapeT, LabelAnchor, TableCell } from '@/store/types';
 import { useEditor } from '@/store/editor';
+import { getContainerAnchor } from '@/store/hierarchy';
 import { isAssetSrc, resolveShapeSrc } from '@/lib/doc-assets';
 import { isMonochromeSvg } from '@/icons/recolorable';
 import {
@@ -241,36 +242,11 @@ function ShapeImpl({ shape }: Props) {
     [rawSrc, docAssets],
   );
 
-  // Containers position their label relative to their ICON anchor child -
-  // pull its geometry from the store so the label tracks live during a
-  // child resize. Selector returns null for non-containers so the
-  // subscription is a no-op.
-  //
-  // Resolve EXCLUSIVELY through the explicit anchorId stamped at container
-  // creation. We deliberately don't fall back to "first icon-kind child by
-  // parent" - that fallback caused a bug where dragging an icon into an
-  // empty container silently promoted that icon to the container's
-  // anchor, even though the user never picked it as the main icon.
-  //
-  // Critically: only `kind === 'icon'` children count. A container holding
-  // a child container / image / group is NOT carrying an icon anchor -
-  // pinning the label to the right-of-child in that case put the parent's
-  // text floating mid-canvas next to whatever happened to be parented
-  // first. The right-of-icon anchor falls back to a top-left-of-container
-  // position when there's no icon (handled below in containerLabel).
-  const containerChild = useEditor((s) => {
-    if (kind !== 'container') return null;
-    if (shape.anchorId === undefined) return null;
-    const anchor = s.diagram.shapes.find((sh) => sh.id === shape.anchorId);
-    // Defensive: ignore stale anchorId pointing at a shape that no
-    // longer belongs to this container (e.g., released by drag-out), or
-    // an anchorId that points at a non-icon kind (the user replaced the
-    // icon with something else, or a save predating the kind check).
-    if (anchor && anchor.parent === shape.id && anchor.kind === 'icon') {
-      return anchor;
-    }
-    return null;
-  });
+  // Follow the chosen SVG icon or pasted image as it moves/resizes. Ordinary
+  // children never acquire the anchor role merely by entering a container.
+  const containerChild = useEditor((s) =>
+    getContainerAnchor(shape, s.diagram.shapes),
+  );
 
   // Icons need a rasterized silhouette so connectors anchor to the visible
   // glyph instead of the bbox. Idempotent - only the first instance of each
@@ -284,8 +260,12 @@ function ShapeImpl({ shape }: Props) {
 
   // Cell-level edit pointer - read upfront so the table body branch can
   // suppress the cell currently under InlineCellEditor.
-  const editingCell = useEditor((s) => s.editingCell);
-  const selectedCell = useEditor((s) => s.selectedCell);
+  const editingCell = useEditor((s) =>
+    s.editingCell?.shapeId === shape.id ? s.editingCell : null,
+  );
+  const selectedCell = useEditor((s) =>
+    s.selectedCell?.shapeId === shape.id ? s.selectedCell : null,
+  );
   // BLUEPRINTR_SHAPE_READONLY_PATCH_SUBSCRIBE
   // Read-only viewer slot. Used below to drop the wrap-mode
   // `overflow:auto` so the public reader / Stratum picker never
@@ -299,6 +279,40 @@ function ShapeImpl({ shape }: Props) {
   // local copy and compare in onClick.
   const cellDownRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Icons and images use the same frame outline and inset. The entire
+  // shape remains the connector boundary; only the artwork moves inward.
+  const frame = kind === 'icon' || kind === 'image' ? shape.frame : undefined;
+  const innerSide = frame
+    ? Math.min(w, h) * (frame === 'circle' ? 0.6 : 0.66)
+    : 0;
+  const frameEl = !frame ? null : frame === 'circle' ? (
+    <ellipse
+      data-media-frame={frame}
+      cx={x + w / 2}
+      cy={y + h / 2}
+      rx={w / 2}
+      ry={h / 2}
+      fill={fill}
+      fillOpacity={shape.fillOpacity}
+      stroke={strokePaint}
+      strokeWidth={strokeWidth}
+      strokeDasharray={strokeDash}
+    />
+  ) : (
+    <rect
+      data-media-frame={frame}
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      rx={Math.min(w, h) * 0.08}
+      fill={fill}
+      fillOpacity={shape.fillOpacity}
+      stroke={strokePaint}
+      strokeWidth={strokeWidth}
+      strokeDasharray={strokeDash}
+    />
+  );
   let body: React.ReactNode = null;
   if (kind === 'rack') {
     body = <RackBody shape={shape} stroke={strokePaint} fill={fill} color={shape.textColor ?? resolvedStroke ?? defaultInk} />;
@@ -613,6 +627,12 @@ function ShapeImpl({ shape }: Props) {
     // Embedded image (paste / drag-in). Body is the bitmap; fall back to a
     // hatched placeholder if no src is set. CSS filters give us a quick
     // grayscale/sepia/invert/blur without dragging in a full filter pipeline.
+    // Preserve the image's pre-frame aspect, including intentional stretches.
+    const aspect = shape.frameAspectRatio ?? 1;
+    const iw = frame ? innerSide * Math.min(1, aspect) : w;
+    const ih = frame ? innerSide / Math.max(1, aspect) : h;
+    const ix = x + (w - iw) / 2;
+    const iy = y + (h - ih) / 2;
     const filterMap: Record<string, string> = {
       grayscale: 'grayscale(100%)',
       sepia: 'sepia(85%)',
@@ -623,7 +643,7 @@ function ShapeImpl({ shape }: Props) {
     // Roundiness - mirror the rect's clamp `min(w,h)/2` so cranking the
     // slider high produces a circle instead of overshoot artefacts.
     const cr = shape.cornerRadius;
-    const clampedR = cr ? Math.max(0, Math.min(cr, Math.min(w, h) / 2)) : 0;
+    const clampedR = cr ? Math.max(0, Math.min(cr, Math.min(iw, ih) / 2)) : 0;
     const clipId = clampedR > 0 ? `img-clip-${shape.id}` : null;
     // Tint - duotone-style luminance mapping. We resolve the swatch first
     // so a stored `var(--stroke-blue)` flips with theme; same hex-recogniser
@@ -639,15 +659,16 @@ function ShapeImpl({ shape }: Props) {
     const tintFilterId = tintRgb ? `img-tint-${shape.id}` : null;
     body = src ? (
       <g>
+        {frameEl}
         {(clipId || tintFilterId) && (
           <defs>
             {clipId && (
               <clipPath id={clipId}>
                 <rect
-                  x={x}
-                  y={y}
-                  width={w}
-                  height={h}
+                  x={ix}
+                  y={iy}
+                  width={iw}
+                  height={ih}
                   rx={clampedR}
                   ry={clampedR}
                 />
@@ -698,14 +719,14 @@ function ShapeImpl({ shape }: Props) {
            * (tint) don't apply through foreignObject, but the css filter
            * presets (grayscale/sepia/invert/blur) and the corner-radius
            * round-out apply directly to the inner <img> via inline style. */
-          <foreignObject x={x} y={y} width={w} height={h}>
+          <foreignObject x={ix} y={iy} width={iw} height={ih}>
             <img
               src={src}
               alt=""
               style={{
                 width: '100%',
                 height: '100%',
-                objectFit: 'fill',
+                objectFit: frame && !shape.frameAspectRatio ? 'contain' : 'fill',
                 display: 'block',
                 borderRadius: clampedR || undefined,
                 filter: cssFilter,
@@ -715,15 +736,15 @@ function ShapeImpl({ shape }: Props) {
           </foreignObject>
         ) : (
           <image
-            x={x}
-            y={y}
-            width={w}
-            height={h}
+            x={ix}
+            y={iy}
+            width={iw}
+            height={ih}
             href={src}
             // `none` lets the bitmap stretch to fill the bbox, matching what
             // dragging a directional resize handle implies. Hold shift while
             // resizing to scale uniformly.
-            preserveAspectRatio="none"
+            preserveAspectRatio={frame && !shape.frameAspectRatio ? 'xMidYMid meet' : 'none'}
             clipPath={clipId ? `url(#${clipId})` : undefined}
             filter={tintFilterId ? `url(#${tintFilterId})` : undefined}
             style={cssFilter ? { filter: cssFilter } : undefined}
@@ -731,18 +752,22 @@ function ShapeImpl({ shape }: Props) {
         )}
       </g>
     ) : (
-      <rect
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rx={clampedR || undefined}
-        ry={clampedR || undefined}
-        fill="rgba(0,0,0,0.04)"
-        stroke="var(--ink-muted)"
-        strokeDasharray="4 3"
-        strokeWidth={1}
-      />
+      <g>
+        {frameEl}
+        <rect
+          x={ix}
+          y={iy}
+          width={iw}
+          height={ih}
+          rx={clampedR || undefined}
+          ry={clampedR || undefined}
+          fill="rgba(0,0,0,0.04)"
+          stroke="var(--ink-muted)"
+          strokeDasharray="4 3"
+          strokeWidth={1}
+          strokeOpacity={1}
+        />
+      </g>
     );
   } else if (kind === 'icon') {
     // Vendor / Iconify icon. SVG markup is sanitized at ingest (vendor pack
@@ -857,49 +882,10 @@ function ShapeImpl({ shape }: Props) {
     // the wrapper's transform attribute (search for `shapeTransform` in this
     // file), not the body builders.
     //
-    // Encapsulation frame. When `shape.frame` is set the icon shape renders
-    // as a circle/square BODY (styled by fill/stroke exactly like a
-    // rect/ellipse) with the glyph inset inside it. The frame - not the
-    // silhouette - is the connector outline (routing.ts keys off
-    // `shape.frame` via geomKind). The inset keeps the glyph off the stroke;
-    // circle uses a tighter box so the glyph stays within the circle's
-    // inscribed square with breathing room.
-    const frame = shape.frame;
-    const fcx = x + w / 2;
-    const fcy = y + h / 2;
-    const innerSide = frame
-      ? Math.min(w, h) * (frame === 'circle' ? 0.6 : 0.66)
-      : 0;
-    const ix = frame ? fcx - innerSide / 2 : x;
-    const iy = frame ? fcy - innerSide / 2 : y;
+    const ix = frame ? x + (w - innerSide) / 2 : x;
+    const iy = frame ? y + (h - innerSide) / 2 : y;
     const iw = frame ? innerSide : w;
     const ih = frame ? innerSide : h;
-    const frameEl = !frame ? null : frame === 'circle' ? (
-      <ellipse
-        cx={fcx}
-        cy={fcy}
-        rx={w / 2}
-        ry={h / 2}
-        fill={fill}
-        fillOpacity={shape.fillOpacity}
-        stroke={strokePaint}
-        strokeWidth={strokeWidth}
-        strokeDasharray={strokeDash}
-      />
-    ) : (
-      <rect
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rx={Math.min(w, h) * 0.08}
-        fill={fill}
-        fillOpacity={shape.fillOpacity}
-        stroke={strokePaint}
-        strokeWidth={strokeWidth}
-        strokeDasharray={strokeDash}
-      />
-    );
     body = parsed ? (
       <g>
         {frameEl}
@@ -2130,17 +2116,12 @@ function ShapeImpl({ shape }: Props) {
   //
   // The selection gate (4) matters because the empty-container "+" reads
   // as chrome on the container's body - leaving it visible while
-  // unselected makes the canvas look chronically half-finished. Once any
-  // container is adopted-into via drag-drop, the + disappears regardless
-  // of selection (condition 2). Selection state is the only reason Shape
+  // unselected makes the canvas look chronically half-finished. Selection
+  // state is the only reason Shape
   // needs to know whether it's selected; everything else (halos, handles)
   // stays in Canvas's overlay layer per the file-level note above.
-  // The "+" only suppresses when there's already an icon-kind anchor child.
-  // Containers holding child containers / images / groups (anything that
-  // isn't a `kind: 'icon'`) still need the affordance - those children are
-  // contents of the container, not its anchor icon. `containerChild` was
-  // narrowed earlier in the file to icon-kind only, so we can drive the
-  // affordance straight from it.
+  // An explicitly anchored icon or image suppresses the "+". Other child
+  // shapes are container contents and do not take the anchor's place.
   const isSelected = useEditor((s) =>
     kind === 'container' && !shape.notation && !containerChild
       ? s.selectedIds.includes(shape.id)

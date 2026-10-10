@@ -2,10 +2,10 @@ import { useEditor } from '@/store/editor';
 import { ConnectorInspector } from './ConnectorInspector';
 import { ShapeInspector } from './ShapeInspector';
 import { DefaultsInspector } from './DefaultsInspector';
+import { MultiSelectionInspector } from './MultiSelectionInspector';
 
-/** Contextual inspector - morphs based on selection (shape vs connector vs
- *  multi-select). Multi-select v2 will show only fields common to all
- *  selected items; v1 picks the first selected for now.
+/** Contextual inspector - single objects keep their detailed editor, while
+ *  multi-selection exposes only shared appearance and arrangement controls.
  *
  *  When nothing is selected, the inspector renders a *defaults* editor IF the
  *  user has pinned it open (`inspectorOpen`). That panel writes to
@@ -17,6 +17,8 @@ import { DefaultsInspector } from './DefaultsInspector';
  *  selected entity changes, which resets the controlled-input drafts. Without
  *  it, internal `useState(value)` defaults stick to the first-mounted value. */
 export function Inspector() {
+  const selectionKey = useEditor((s) => s.selectedIds.join('\0'));
+  const selectionCount = useEditor((s) => s.selectedIds.length);
   const id = useEditor((s) => s.selectedIds[0] ?? null);
   const shape = useEditor((s) =>
     id ? s.diagram.shapes.find((sh) => sh.id === id) ?? null : null,
@@ -27,6 +29,7 @@ export function Inspector() {
   const inspectorOpen = useEditor((s) => s.inspectorOpen);
 
   if (!id) return inspectorOpen ? <DefaultsInspector /> : null;
+  if (selectionCount > 1) return <MultiSelectionInspector key={selectionKey} />;
   if (conn) return <ConnectorInspector key={conn.id} conn={conn} />;
   if (shape) return <ShapeInspector key={shape.id} shape={shape} />;
   return null;

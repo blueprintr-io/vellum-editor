@@ -2,6 +2,7 @@ import { rackTextLayout } from '@/editor/rack/text-layout';
 import { calloutTextBox, notationTextRegions } from '@/editor/notation/geometry';
 import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '@/store/editor';
+import { getContainerAnchor } from '@/store/hierarchy';
 import type { TextDirection } from '@/store/types';
 import { resolveSwatchColor } from '@/editor/swatches';
 import {
@@ -87,27 +88,10 @@ export function InlineLabelEditor() {
   const shape = useEditor((s) =>
     editingId ? s.diagram.shapes.find((sh) => sh.id === editingId) ?? null : null,
   );
-  // Container labels anchor right of the icon child, so the inline editor
-  // needs to follow. Mirror Shape.tsx: only count `kind === 'icon'`
-  // children; non-icon children (nested containers, images, groups) don't
-  // get the right-of-icon treatment, and the editor falls back to the
-  // top-left "where the icon would have been" slot.
-  const containerChild = useEditor((s) => {
-    if (shape?.kind !== 'container') return null;
-    if (shape.anchorId !== undefined) {
-      const a = s.diagram.shapes.find((sh) => sh.id === shape.anchorId);
-      if (a && a.parent === shape.id && a.kind === 'icon') return a;
-      // Stale anchorId (icon was deleted) - don't silently re-anchor onto
-      // some other icon-kind child. Mirror Shape.tsx's strict treatment.
-      return null;
-    }
-    // Legacy fallback for diagrams pre-anchorId.
-    return (
-      s.diagram.shapes.find(
-        (sh) => sh.parent === shape.id && sh.kind === 'icon',
-      ) ?? null
-    );
-  });
+  // Use the same explicit SVG/image anchor as the rendered container label.
+  const containerChild = useEditor((s) =>
+    getContainerAnchor(shape, s.diagram.shapes),
+  );
   const pan = useEditor((s) => s.pan);
   const zoom = useEditor((s) => s.zoom);
 
@@ -490,15 +474,13 @@ export function InlineLabelEditor() {
       worldW = Math.max(shape.w - cw - 24, 100);
       worldH = 28;
     } else {
-      // Mirror Shape.tsx's "no icon" fallback: editor sits where the icon
-      // WOULD render (top-left corner of the container, after the virtual
-      // 12px pad + 40px icon slot) so what the user types lands exactly
-      // where the committed text will paint.
+      // Without an anchor, Shape.tsx paints the label at the 12px inset.
+      // Offset the editor's fixed screen-space padding and border so its
+      // text starts there too, without reserving a nonexistent icon slot.
       const PAD = 12;
-      const ANCHOR_ICON_SIZE = 40;
-      worldX = shape.x + PAD + ANCHOR_ICON_SIZE + 8;
-      worldY = shape.y + PAD + ANCHOR_ICON_SIZE / 2 - 14;
-      worldW = Math.max(shape.w - PAD - ANCHOR_ICON_SIZE - 24, 100);
+      worldX = shape.x + PAD - 7 / zoom;
+      worldY = shape.y + PAD - 5 / zoom;
+      worldW = Math.max(shape.w - PAD * 2 + 14 / zoom, 100);
       worldH = 28;
     }
   } else if (
@@ -654,7 +636,8 @@ export function InlineLabelEditor() {
   if (
     anchor === 'top-left' ||
     anchor === 'top-right' ||
-    anchor === 'inside-top'
+    anchor === 'inside-top' ||
+    (anchor === 'right-of-icon' && !containerChild)
   ) {
     justifyContent = 'flex-start';
   } else if (
