@@ -73,7 +73,7 @@ export function MultiSelectionInspector() {
           {textColor && <SelectionColor label="Text colour" kind="stroke" state={textColor} onChange={(value) => update({ textColor: value })} />}
         </Section>}
         <MultiShapeControls appearance={appearance} onChange={update} />
-        {!appearance.shapeTargets.length && appearance.connectors.length > 0 && <MultiConnectorControls connectors={appearance.connectors} onChange={update} />}
+        <MultiConnectorControls connectors={appearance.connectors} withShapes={appearance.shapeTargets.length > 0} onChange={update} />
         {layer && <Section title="LAYER" collapseKey="multi:LAYER">
           <SelectionChoice label="Layer" state={layer} options={[{ value: 'blueprint', label: 'Blueprint' }, { value: 'notes', label: 'Notes' }]} onChange={(value) => {
             const state = useEditor.getState();

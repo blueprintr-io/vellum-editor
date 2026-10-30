@@ -432,6 +432,25 @@ export function connectorsInMarquee(
     .map((c) => c.id);
 }
 
+/** What an additive (⇧) marquee does to the selection: it toggles everything
+ *  it captured, the same as ⇧-clicking each object in turn. Captured objects
+ *  that were already selected are `dropped`; the rest are `added`. The
+ *  resulting `selection` keeps the existing order and appends the additions. */
+export function toggleMarqueeSelection(
+  selected: readonly string[],
+  captured: readonly string[],
+): { selection: string[]; added: string[]; dropped: string[] } {
+  const current = new Set(selected);
+  const hit = new Set(captured);
+  const added = [...hit].filter((id) => !current.has(id));
+  const dropped = [...hit].filter((id) => current.has(id));
+  return {
+    selection: [...selected.filter((id) => !hit.has(id)), ...added],
+    added,
+    dropped,
+  };
+}
+
 /** Distance from point to a path's polyline approximation. v1 just checks AABB
  *  inflated by hit-radius - accurate enough for connector picking when paired
  *  with the fat-stroke hit target the connector renders. */

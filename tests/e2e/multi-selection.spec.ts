@@ -133,3 +133,42 @@ test('gradient and layer edits preserve batch semantics and independent gradient
   expect(layered.past).toBe(solid.past + 1);
   expect(layered.shapes.map((shape) => shape.layer)).toEqual(['notes', 'notes', 'blueprint']);
 });
+
+test('a selection with shapes and connectors still sets line jumps on just the connectors', async ({ page }) => {
+  await seed(page);
+  await page.evaluate(() => {
+    const state = window.__VELLUM_TEST__!.modules['/src/store/editor.ts'].useEditor.getState();
+    state.addConnector({ id: 'line2', from: { x: 110, y: 470 }, to: { x: 600, y: 470 }, routing: 'straight', layer: 'blueprint' });
+    state.setSelected(['a', 'line', 'line2']);
+  });
+  const panel = page.getByTestId('multi-selection-inspector');
+  await expect(panel).toContainText('Applies to the 2 connectors in the selection.');
+  const before = await snapshot(page);
+  await panel.getByRole('combobox', { name: 'Line jumps', exact: true }).selectOption('on');
+  const after = await snapshot(page);
+  expect(after.connectors.map((connector) => connector.hop)).toEqual([true, true]);
+  expect(after.shapes).toEqual(before.shapes);
+  expect(after.past).toBe(before.past + 1);
+  await panel.getByRole('combobox', { name: 'Line jumps', exact: true }).selectOption('off');
+  expect((await snapshot(page)).connectors.map((connector) => connector.hop)).toEqual([false, false]);
+});
+
+test('a shift marquee deselects selected objects it captures and adds the rest', async ({ page }) => {
+  await seed(page);
+  const canvas = await page.locator('[data-shape-id="a"]').evaluate((element) => {
+    const svg = element.closest('svg')!.getBoundingClientRect();
+    return { x: svg.left, y: svg.top };
+  });
+  const at = (x: number, y: number) => ({ x: canvas.x + x, y: canvas.y + y });
+  const start = at(80, 130);
+  const end = at(610, 440);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2);
+  await page.mouse.move(end.x, end.y);
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  const selected = await page.evaluate(() => window.__VELLUM_TEST__!.modules['/src/store/editor.ts'].useEditor.getState().selectedIds);
+  expect(selected).toEqual(['c', 'line']);
+});

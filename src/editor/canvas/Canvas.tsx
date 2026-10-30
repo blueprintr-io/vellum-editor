@@ -51,6 +51,7 @@ import {
   screenToWorld,
   shapesInMarquee,
   shapeSupportsRotation,
+  toggleMarqueeSelection,
 } from './projection';
 import {
   autoAnchor,
@@ -530,9 +531,12 @@ type Preview =
       /** Live "would-select" candidates - recomputed every move. We render
        *  their selection halos in real time so the user sees what the marquee
        *  is about to pick up before releasing. Same fully-contained rule as
-       *  commit. */
+       *  commit. An additive marquee lists only what it would add here. */
       shapeIds: string[];
       connectorIds: string[];
+      /** Selected objects an additive marquee would deselect on release.
+       *  Their selection chrome is hidden while the marquee is live. */
+      dropIds: string[];
     };
 
 /** Number of pixels of pointer travel before a drag is "actual" (i.e. moved=true).
@@ -732,7 +736,6 @@ export function Canvas() {
   const selectedIds = useEditor((s) => s.selectedIds);
   const setSelected = useEditor((s) => s.setSelected);
   const toggleSelected = useEditor((s) => s.toggleSelected);
-  const addToSelection = useEditor((s) => s.addToSelection);
   // `focusedGroupId` is the group the user has "entered" via double-click.
   // Subscribed here so the focus halo re-renders when it flips.
   const focusedGroupId = useEditor((s) => s.focusedGroupId);
@@ -1374,6 +1377,15 @@ export function Canvas() {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<Pt | null>(null);
   const [preview, setPreview] = useState<Preview>(null);
+  // Objects a live ⇧-marquee will deselect, drawn as already deselected.
+  // Keyed on the joined ids so the scene only rebuilds when the set changes,
+  // not on every pointer move.
+  const marqueeDropKey =
+    preview?.kind === 'marquee' ? preview.dropIds.join('\0') : '';
+  const marqueeDrop = useMemo(
+    () => new Set(marqueeDropKey ? marqueeDropKey.split('\0') : []),
+    [marqueeDropKey],
+  );
   const pointerDownRef = useRef<number | null>(null);
   /** Our own multi-click counter for the mouse/pen path.
    *
@@ -1623,12 +1635,12 @@ export function Canvas() {
           fromShape={'shape' in it.item.from ? routingShapesByIdMap.get(it.item.from.shape) : undefined}
           toShape={'shape' in it.item.to ? routingShapesByIdMap.get(it.item.to.shape) : undefined}
           silhouetteRevision={silhouetteTick}
-          selected={selectedSet.has(it.item.id)}
+          selected={selectedSet.has(it.item.id) && !marqueeDrop.has(it.item.id)}
           hops={lineJumps.get(it.item.id)}
         />
       ),
     );
-  }, [visibleShapes, visibleConnectors, effZ, routingShapesByIdMap, selectedSet, lineJumps, silhouetteTick]);
+  }, [visibleShapes, visibleConnectors, effZ, routingShapesByIdMap, selectedSet, marqueeDrop, lineJumps, silhouetteTick]);
 
   /** Set the interaction in the ref AND mirror its kind into state so the
    *  cursor can update without polling. Also derives + publishes the
@@ -3870,7 +3882,8 @@ export function Canvas() {
 
         // Empty space with the select tool:
         //   left drag                 → marquee select (replace)
-        //   shift + drag              → marquee additive
+        //   shift + drag              → marquee toggle (captured objects
+        //                               that were selected drop out)
         //   ⌘/⌃ + drag                → marquee additive variant (still
         //                               replaces selection)
         //   middle-mouse              → pan (handled in the middleButton
@@ -3887,6 +3900,7 @@ export function Canvas() {
           rect: { x: world.x, y: world.y, w: 0, h: 0 },
           shapeIds: [],
           connectorIds: [],
+          dropIds: [],
         });
         (e.target as Element).setPointerCapture?.(e.pointerId);
         pointerDownRef.current = e.pointerId;
@@ -5391,12 +5405,24 @@ export function Canvas() {
           w: world.x - cur.start.x,
           h: world.y - cur.start.y,
         });
-        const liveShapeIds = shapesInMarquee(liveRect, marqueeShapes);
+        const liveFocus = useEditor.getState().focusedGroupId;
+        const liveShapeIds = shapesInMarquee(liveRect, marqueeShapes).filter(
+          (id) => id !== liveFocus,
+        );
         const liveConnectorIds = connectorsInMarquee(
           liveRect,
           visibleConnectors,
           new Set(liveShapeIds),
         );
+        // ⇧ toggles, so halo only what it would add and hide the selection
+        // chrome of what it would drop - the canvas shows the release result.
+        const toggled = cur.additive
+          ? toggleMarqueeSelection(useEditor.getState().selectedIds, [
+              ...liveShapeIds,
+              ...liveConnectorIds,
+            ])
+          : null;
+        const adding = toggled && new Set(toggled.added);
         setPreview({
           kind: 'marquee',
           rect: {
@@ -5405,8 +5431,13 @@ export function Canvas() {
             w: world.x - cur.start.x,
             h: world.y - cur.start.y,
           },
-          shapeIds: liveShapeIds,
-          connectorIds: liveConnectorIds,
+          shapeIds: adding
+            ? liveShapeIds.filter((id) => adding.has(id))
+            : liveShapeIds,
+          connectorIds: adding
+            ? liveConnectorIds.filter((id) => adding.has(id))
+            : liveConnectorIds,
+          dropIds: toggled?.dropped ?? [],
         });
         return;
       }
@@ -6523,7 +6554,12 @@ export function Canvas() {
             setContextMenu(null);
           }
         } else if (cur.additive) {
-          addToSelection(allIds);
+          // ⇧ toggles what the marquee captured: selected objects drop out,
+          // the rest join - the same as ⇧-clicking each one.
+          setSelected(
+            toggleMarqueeSelection(useEditor.getState().selectedIds, allIds)
+              .selection,
+          );
         } else {
           setSelected(allIds);
         }
@@ -6665,7 +6701,6 @@ export function Canvas() {
       activeTool,
       addConnector,
       addShape,
-      addToSelection,
       bindings,
       commitHistory,
       eventToWorld,
@@ -7900,7 +7935,7 @@ export function Canvas() {
           )
           .map((s) => {
             const isHover = hover?.kind === 'shape' && hover.id === s.id;
-            const isSelected = selectedSet.has(s.id);
+            const isSelected = selectedSet.has(s.id) && !marqueeDrop.has(s.id);
             // Both connector-drag previews expose the same { to, toShape }
             // shape and should reveal anchors identically - whether the
             // user is drawing a NEW connector or repositioning an EXISTING
@@ -8022,7 +8057,7 @@ export function Canvas() {
 
         {/* Selection overlay - halos + corner handles for selected shapes.
          *  Rendered AFTER smart anchors so the handles always sit on top. */}
-        {selectedShapes.map((s) => (
+        {selectedShapes.filter((s) => !marqueeDrop.has(s.id)).map((s) => (
           <SelectionOverlay
             key={`sel-${s.id}`}
             shape={s}
@@ -8033,7 +8068,7 @@ export function Canvas() {
 
         {/* Connector waypoint + midpoint handles for selected connectors. */}
         {visibleConnectors
-          .filter((c) => selectedSet.has(c.id))
+          .filter((c) => selectedSet.has(c.id) && !marqueeDrop.has(c.id))
           .map((c) => {
             const poly = connectorSegmentPolyline(c);
             if (!poly) return null;

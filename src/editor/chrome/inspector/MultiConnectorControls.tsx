@@ -50,15 +50,22 @@ const MARKER_OPTIONS: { value: EndpointMarker; label: string }[] = [
   { value: 'slash', label: 'Slash' },
 ];
 
-/** Only mounted for all-connector selections. The parent owns the disabled
- * read-only fieldset and guarded, single-history-entry updateSelection. */
-export function MultiConnectorControls({ connectors, onChange }: {
+/** Mounted whenever the selection holds connectors, shapes or not: a marquee
+ * over connected lines always takes their shapes too. Every field here is
+ * connector-only, and updateSelection keeps those off shapes. The parent owns
+ * the disabled read-only fieldset and guarded, single-history-entry
+ * updateSelection. */
+export function MultiConnectorControls({ connectors, withShapes = false, onChange }: {
   connectors: Connector[];
+  withShapes?: boolean;
   onChange: (patch: Partial<Shape> & Partial<Connector>) => void;
 }) {
   if (!connectors.length) return null;
   const state = connectorSelection(connectors);
   return <Section title="CONNECTORS" collapseKey="multi:CONNECTORS">
+    {withShapes && <p className="text-[10px] text-fg-muted leading-snug">
+      Applies to the {connectors.length === 1 ? 'connector' : `${connectors.length} connectors`} in the selection.
+    </p>}
     <SelectionChoice label="Routing" state={state.routing} options={[
       { value: 'straight', label: 'Direct' }, { value: 'curved', label: 'Curved' },
       { value: 'orthogonal', label: 'Elbow' },
