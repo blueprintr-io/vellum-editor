@@ -1,0 +1,30 @@
+name: Notify the Obsidian plugin
+
+# Starts the Obsidian plugin's update (blueprintr-io/vellum-obsidian,
+# follow-vellum.yml) as soon as a core release finishes, instead of waiting
+# for its hourly check. It needs the secret OBSIDIAN_PLUGIN_DISPATCH_TOKEN:
+# a fine-grained token with Contents read and write on that repository.
+# Without the secret it does nothing.
+#
+# This file is outside auto-release.yml's path filter, so changing it does
+# not cut a desktop release.
+
+on:
+  workflow_run:
+    workflows: [Auto release Core build inputs]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.OBSIDIAN_PLUGIN_DISPATCH_TOKEN }}
+    steps:
+      - name: Ask the plugin to follow this release
+        if: env.TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.OBSIDIAN_PLUGIN_DISPATCH_TOKEN }}
+        run: gh api repos/blueprintr-io/vellum-obsidian/dispatches -f event_type=vellum-release
