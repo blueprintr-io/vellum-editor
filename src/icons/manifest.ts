@@ -10,6 +10,16 @@ import {
 } from '@/lib/branded-icon-namespaces';
 import { FuzzyIndex } from '@/lib/fuzzy-search';
 import { sanitizeSvg } from '@/lib/sanitize-svg';
+import {
+  ADDED_PACK_PREFIX,
+  addedVendorPack,
+  getAddedPack,
+  getAddedPacks,
+  loadAddedPacks,
+  onAddedPacksChange,
+  type AddedIcon,
+  type AddedIconPack,
+} from './added-packs';
 
 const MANIFEST_URL = '/icons/manifest.json';
 
@@ -36,7 +46,113 @@ let _manifest: Manifest | null = null;
 let _manifestPromise: Promise<Manifest> | null = null;
 const _packCache = new Map<string, Promise<VendorPack>>();
 
+/* `_manifest` is the bundled catalogue exactly as fetched. Readers get
+ * `_catalog`: the bundled packs plus the packs the user added. */
+let _catalog: Manifest | null = null;
+let _catalogPromise: Promise<Manifest> | null = null;
+const _catalogListeners = new Set<(m: Manifest) => void>();
+
+/** `missing`: the host bundles no packs and answered with a 404 (the
+ *  Obsidian plugin, a build without vellum-iconpacks). `failed`: anything
+ *  else went wrong, so a later load tries again. */
+export type BundledPacksStatus = 'loading' | 'loaded' | 'missing' | 'failed';
+let _bundledStatus: BundledPacksStatus = 'loading';
+let _bundledFailedAt = 0;
+/** After a failed load, readers wait this long before fetching again. */
+const BUNDLED_RETRY_MS = 30_000;
+
+/** Rebuild the catalogue and tell subscribers. Added packs come first, so a
+ *  pack the user just added heads the Icons tab. */
+function publishCatalog(): Manifest {
+  const vendors: Record<string, ManifestVendor> = {};
+  const icons: ManifestEntry[] = [];
+  for (const pack of getAddedPacks()) {
+    vendors[pack.key] = addedVendor(pack);
+    for (const icon of pack.icons) icons.push(addedEntry(pack, icon));
+  }
+  for (const [key, vendor] of Object.entries(_manifest?.vendors ?? {})) {
+    if (!(key in vendors)) vendors[key] = vendor;
+  }
+  for (const key of _packCache.keys()) {
+    if (key.startsWith(ADDED_PACK_PREFIX)) _packCache.delete(key);
+  }
+  const catalog: Manifest = {
+    ...(_manifest ?? { version: '' }),
+    vendors,
+    icons: _manifest ? icons.concat(_manifest.icons) : icons,
+  };
+  _catalog = catalog;
+  for (const listener of _catalogListeners) listener(catalog);
+  return catalog;
+}
+
+onAddedPacksChange(() => {
+  publishCatalog();
+});
+
+function addedVendor(pack: AddedIconPack): ManifestVendor {
+  return {
+    name: pack.name,
+    version: pack.version,
+    packUrl: '',
+    trademark: {
+      holder: pack.holder || 'User-supplied',
+      notice: `Added by you from ${pack.source}. You are responsible for having the rights to use these icons.`,
+      guidelinesUrl: pack.guidelinesUrl ?? '',
+    },
+    added: { source: pack.source, count: pack.icons.length },
+  };
+}
+
+function addedEntry(pack: AddedIconPack, icon: AddedIcon): ManifestEntry {
+  return {
+    id: `${pack.key}/${icon.id}`,
+    v: pack.key,
+    n: icon.name,
+    c: icon.category,
+    k: icon.keywords,
+    b: false,
+  };
+}
+
+/** The catalogue: bundled packs plus the user's added packs. Never rejects,
+ *  so a host that bundles no packs still shows the added ones. */
 export async function loadManifest(): Promise<Manifest> {
+  const retry = _bundledStatus === 'failed' && Date.now() - _bundledFailedAt > BUNDLED_RETRY_MS;
+  if (_catalog && _bundledStatus !== 'loading' && !retry) return _catalog;
+  _catalogPromise ??= Promise.all([
+    loadBundledManifest().then(
+      () => {
+        _bundledStatus = 'loaded';
+      },
+      (err: unknown) => {
+        _bundledStatus = /\b404\b/.test(String(err instanceof Error ? err.message : err))
+          ? 'missing'
+          : 'failed';
+        _bundledFailedAt = Date.now();
+        if (_bundledStatus === 'failed') console.warn('bundled icon packs failed to load', err);
+      },
+    ),
+    loadAddedPacks(),
+  ])
+    .then(() => publishCatalog())
+    .finally(() => {
+      _catalogPromise = null;
+    });
+  return _catalogPromise;
+}
+
+export function getBundledPacksStatus(): BundledPacksStatus {
+  return _bundledStatus;
+}
+
+/** Fetch the bundled packs again now, after a failed load. */
+export function retryBundledPacks(): Promise<Manifest> {
+  _bundledFailedAt = 0;
+  return loadManifest();
+}
+
+async function loadBundledManifest(): Promise<Manifest> {
   if (_manifest) return _manifest;
   if (_manifestPromise) return _manifestPromise;
   _manifestPromise = fetch(MANIFEST_URL)
@@ -76,7 +192,15 @@ export async function loadManifest(): Promise<Manifest> {
 }
 
 export function getManifest(): Manifest | null {
-  return _manifest;
+  return _catalog;
+}
+
+/** Hear every new catalogue (a pack added or removed). */
+export function subscribeManifest(listener: (m: Manifest) => void): () => void {
+  _catalogListeners.add(listener);
+  return () => {
+    _catalogListeners.delete(listener);
+  };
 }
 
 /** React hook for components that want to read the manifest reactively -
@@ -91,11 +215,13 @@ export function getManifest(): Manifest | null {
  *  loadManifest() if it hasn't already started - same idempotency as the
  *  module-level cache. */
 export function useManifest(): Manifest | null {
-  const [m, setM] = useState<Manifest | null>(_manifest);
+  const [m, setM] = useState<Manifest | null>(_catalog);
+  // Packs the user adds or removes later replace the catalogue.
+  useEffect(() => subscribeManifest(setM), []);
   useEffect(() => {
-    if (_manifest) {
+    if (_catalog) {
       // Late mount after load: catch up the local state. Cheap.
-      if (m !== _manifest) setM(_manifest);
+      if (m !== _catalog) setM(_catalog);
       return;
     }
     let cancelled = false;
@@ -122,6 +248,12 @@ export async function loadVendorPack(vendorKey: string): Promise<VendorPack> {
   const manifest = await loadManifest();
   const vendor = manifest.vendors[vendorKey];
   if (!vendor) throw new Error(`unknown vendor: ${vendorKey}`);
+  const added = vendor.added ? getAddedPack(vendorKey) : null;
+  if (added) {
+    const ready = Promise.resolve(addedVendorPack(added));
+    _packCache.set(vendorKey, ready);
+    return ready;
+  }
   const promise = fetch(vendor.packUrl)
     .then((r) => {
       if (!r.ok) throw new Error(`pack fetch failed: ${r.status}`);
@@ -178,8 +310,8 @@ export function searchManifest(
   query: string,
   limit = 24,
 ): Array<{ entry: ManifestEntry; vendor: ManifestVendor }> {
-  if (!_manifest || !query.trim()) return [];
-  const manifest = _manifest;
+  if (!_catalog || !query.trim()) return [];
+  const manifest = _catalog;
   const q = query.trim().toLowerCase();
   let hits = manifestSearchIndex(manifest).search(q);
   const complete = hits.filter((h) => !h.missing);

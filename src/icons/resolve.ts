@@ -25,6 +25,14 @@ const VENDOR_CONSTRAINTS_MONO: IconConstraints = {
 
 const DEFAULT_SIZE = { w: 64, h: 64 };
 
+// Icons from a pack the user added are their own artwork, so nothing is
+// locked beyond the aspect ratio.
+const ADDED_PACK_CONSTRAINTS: IconConstraints = {
+  lockColors: false,
+  lockAspect: true,
+  lockRotation: false,
+};
+
 export async function resolveIcon(payload: IconDragPayload): Promise<ResolvedIcon> {
   return resolveVendor(payload.iconId, payload.vendor);
 }
@@ -36,6 +44,23 @@ async function resolveVendor(iconId: string, vendorKey: string): Promise<Resolve
   const manifest = getManifest();
   const vendor = manifest?.vendors[vendorKey];
   if (!vendor) throw new Error(`vendor not in manifest: ${vendorKey}`);
+  if (vendor.added) {
+    const { holder, guidelinesUrl } = vendor.trademark;
+    const svg = sanitizeSvg(icon.svg);
+    return {
+      svg,
+      attribution: {
+        source: 'vendor',
+        iconId,
+        holder,
+        license: 'User-supplied',
+        sourceUrl: guidelinesUrl,
+        ...(guidelinesUrl ? { guidelinesUrl } : {}),
+      },
+      constraints: ADDED_PACK_CONSTRAINTS,
+      defaultSize: DEFAULT_SIZE,
+    };
+  }
   const entry = manifest?.icons.find((e) => e.id === iconId);
 
   const attribution: IconAttribution = {

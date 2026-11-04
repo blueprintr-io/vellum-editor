@@ -137,12 +137,14 @@ export function IconResultCard(props: Props) {
       <span className="text-[10px] leading-[1.1] text-center max-w-full truncate w-full px-1">
         {entry.n}
       </span>
-      <IconLicenseBadge
+      {/* A pack the user added carries no trademark claim of ours. */}
+      {vendor.added && <IconLicenseBadge tone="user" size="xs" />}
+      {!vendor.added && <IconLicenseBadge
         tone="vendor"
         short={shortVendorName(vendor.name)}
         guidelinesUrl={vendor.trademark.guidelinesUrl}
         size="xs"
-      />
+      />}
     </button>
   );
 }

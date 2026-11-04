@@ -338,7 +338,7 @@ export async function drawioToDiagram(
 
 /** Detect + decode the compressed payload draw.io stores inside <diagram>.
  *  Pipeline: base64 → bytes → DEFLATE-raw → URI-encoded UTF-8 → decoded XML. */
-async function decodeCompressedDiagram(inner: string): Promise<string> {
+export async function decodeCompressedDiagram(inner: string): Promise<string> {
   // Base64 decode. The payload uses standard alphabet (no urlsafe).
   let bin: string;
   try {

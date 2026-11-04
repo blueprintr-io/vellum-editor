@@ -7,12 +7,14 @@
  * LibraryPanel.
  *
  * Two-state view:
- *   - List mode: every bundled vendor pack as a row. Pinned packs first
- *     (right-click toggles), then the rest in manifest order. Click a pack
- *     to drill in.
+ *   - List mode: every vendor pack as a row, the user's added packs ahead
+ *     of the bundled ones. Pinned packs first (right-click toggles), then
+ *     the rest in manifest order. Click a pack to drill in. "Add icon pack"
+ *     reads a draw.io library, a zip or SVG files into a new pack.
  *   - Detail mode: the full icon grid for the chosen pack. Reuses
  *     IconResultCard (vendor source) so drag-to-canvas works without a
- *     custom drag handler. A back button in the header returns to the list.
+ *     custom drag handler. A back button in the header returns to the list,
+ *     and a pack the user added can be removed from here.
  *
  * Why a dedicated browser (vs. relying on search): the icon-search results
  * panel only renders when the user has typed something - the new tab is the
@@ -24,11 +26,20 @@
  * menu so the right-click feels like a pin gesture, not a noisy menu - same
  * pattern the canvas uses for its own gestures. */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor } from '@/store/editor';
-import { getManifest, loadManifest } from '@/icons/manifest';
+import {
+  getBundledPacksStatus,
+  getManifest,
+  loadManifest,
+  retryBundledPacks,
+  subscribeManifest,
+} from '@/icons/manifest';
+import { removeIconPack } from '@/icons/added-packs';
 import type { Manifest, ManifestVendor, VendorPack } from '@/icons/types';
 import { PackIconGrid } from './icons/PackIconGrid';
+import { AddIconPackDialog, ICON_PACK_ACCEPT } from './icons/AddIconPackDialog';
+import { Button } from './ui/Button';
 
 type Props = {
   /** Match the parent grid density (3 in LibraryPanel, 4 in MoreShapesPopover). */
@@ -62,6 +73,8 @@ export function IconPacksBrowser({ cols, openVendorRequest }: Props) {
       cancelled = true;
     };
   }, [manifest]);
+  // Adding or removing a pack replaces the catalogue.
+  useEffect(() => subscribeManifest(setManifest), []);
 
   // Currently-drilled-in vendor key. null = pack list view.
   const [openVendor, setOpenVendor] = useState<string | null>(
@@ -74,6 +87,45 @@ export function IconPacksBrowser({ cols, openVendorRequest }: Props) {
   useEffect(() => {
     if (openVendorRequest) setOpenVendor(openVendorRequest.vendor);
   }, [openVendorRequest]);
+
+  // Files picked for "Add icon pack"; the dialog reads and confirms them.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pickedFiles, setPickedFiles] = useState<File[] | null>(null);
+  const addPack = (
+    <>
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        title="Add a draw.io library, a .zip of SVGs or SVG files"
+        className="w-full px-[8px] py-[7px] bg-transparent border border-dashed border-border rounded-[5px] text-[11px] text-fg-muted hover:text-fg hover:bg-bg-emphasis transition-colors cursor-pointer"
+      >
+        + Add icon pack…
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept={ICON_PACK_ACCEPT}
+        className="hidden"
+        onChange={(e) => {
+          const files = e.target.files ? Array.from(e.target.files) : [];
+          // Clear it so picking the same file again still fires.
+          e.target.value = '';
+          if (files.length > 0) setPickedFiles(files);
+        }}
+      />
+      {pickedFiles && (
+        <AddIconPackDialog
+          files={pickedFiles}
+          onClose={() => setPickedFiles(null)}
+          onAdded={(key) => {
+            setPickedFiles(null);
+            setOpenVendor(key);
+          }}
+        />
+      )}
+    </>
+  );
 
   // Build the ordered vendor list - pinned first (in pinned order), then
   // everything else in manifest insertion order. We dedupe in case a stale
@@ -95,6 +147,31 @@ export function IconPacksBrowser({ cols, openVendorRequest }: Props) {
     );
   }
 
+  if (orderedVendorKeys.length === 0) {
+    const failed = getBundledPacksStatus() === 'failed';
+    return (
+      <div className="flex flex-col gap-[8px]">
+        <div className="px-2 pt-6 pb-1 flex flex-col items-center gap-[8px] text-center text-fg-muted text-[11px] font-mono">
+          <span>{failed ? "couldn't load the built-in icon packs" : 'no icon packs yet'}</span>
+          {failed && (
+            <button
+              type="button"
+              onClick={() => void retryBundledPacks()}
+              className="px-[10px] py-[4px] bg-transparent border border-border rounded-[5px] text-fg hover:bg-bg-emphasis transition-colors cursor-pointer"
+            >
+              try again
+            </button>
+          )}
+        </div>
+        {addPack}
+        <p className="text-[10px] text-fg-muted px-[2px] leading-snug">
+          Add a draw.io library, a .zip of SVGs or a few SVG files. The pack
+          shows up here and in search.
+        </p>
+      </div>
+    );
+  }
+
   if (openVendor && manifest.vendors[openVendor]) {
     return (
       <PackDetail
@@ -111,6 +188,7 @@ export function IconPacksBrowser({ cols, openVendorRequest }: Props) {
       <div className="text-[9px] text-fg-muted px-[2px] pb-[6px] leading-tight">
         Right-click to pin a pack to the top. Click to browse it.
       </div>
+      <div className="pb-[3px]">{addPack}</div>
       {orderedVendorKeys.map((key) => {
         const v = manifest.vendors[key];
         if (!v) return null;
@@ -181,7 +259,9 @@ function PackRow({
           {vendor.name}
         </span>
         <span className="text-[9px] font-mono text-fg-muted truncate">
-          {vendor.version}
+          {vendor.added
+            ? `${vendor.added.count} icons · added by you`
+            : vendor.version}
         </span>
       </span>
       {/* Caret-right - drill affordance */}
@@ -211,6 +291,14 @@ function PackDetail({
   onBack: () => void;
 }) {
   const [pack, setPack] = useState<VendorPack | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removeFailed, setRemoveFailed] = useState(false);
+  const remove = () => {
+    removeIconPack(vendorKey).then(onBack, (err: unknown) => {
+      console.error('removing icon pack failed', err);
+      setRemoveFailed(true);
+    });
+  };
 
   return (
     <div className="flex flex-col">
@@ -237,7 +325,37 @@ function PackDetail({
         <span className="text-[9px] font-mono text-fg-muted shrink-0">
           {pack ? `${pack.icons.length}` : ''}
         </span>
+        {vendor.added && !confirmRemove && (
+          <button
+            type="button"
+            onClick={() => setConfirmRemove(true)}
+            title="Remove this pack"
+            aria-label="Remove this pack"
+            className="bg-transparent border-none text-fg-muted hover:text-fg cursor-pointer p-[2px] rounded shrink-0"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 8.5h6.6l.7-8.5M6.75 7v4M9.25 7v4" />
+            </svg>
+          </button>
+        )}
       </div>
+      {confirmRemove && (
+        <div className="flex flex-col gap-[6px] px-[2px] pb-[10px]">
+          <span className="text-[11px] text-fg leading-snug">
+            {removeFailed
+              ? "The pack couldn't be removed. Try again."
+              : 'Remove this pack? Icons already in your diagrams stay as they are.'}
+          </span>
+          <div className="flex gap-[6px] justify-end">
+            <Button size="sm" variant="secondary" onClick={() => setConfirmRemove(false)}>
+              Keep
+            </Button>
+            <Button size="sm" variant="primary" onClick={remove}>
+              Remove pack
+            </Button>
+          </div>
+        </div>
+      )}
       <PackIconGrid
         vendorKey={vendorKey}
         vendor={vendor}

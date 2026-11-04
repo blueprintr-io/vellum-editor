@@ -87,6 +87,14 @@ export type ManifestVendor = {
    *  Optional: missing means "no special capabilities" (the default for
    *  trademark-locked vendor art). */
   capabilities?: ManifestVendorCapabilities;
+  /** Set on packs the user added themselves (src/icons/added-packs.ts).
+   *  Their icons are served from local storage instead of `packUrl`, carry
+   *  "User-supplied" attribution and keep their colours unlocked. */
+  added?: {
+    /** File the pack was read from ("fortinet.xml"). */
+    source: string;
+    count: number;
+  };
 };
 
 /** Pack-level feature flags. New flags added here must also be emitted by
